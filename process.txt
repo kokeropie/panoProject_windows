@@ -123,12 +123,52 @@ Default:        none — the 6 conditions are exhaustive over
                 (date-vs-DATEOFSERVICESTART); 0 nulls in this dataset.
 
 
+STEP 6 — output_active.xlsx / output_void.xlsx split
+----------------------------------------
+Source file: output/output.xlsx (589 rows, 131 columns)
+
+output_active.xlsx:
+  - full copy of all 589 rows
+  - added column voidStatus, filled "all" for every row
+  - 589 rows x 132 columns
+
+output_void.xlsx:
+  - copy of only rows where Voided <> 0 (3 rows — same -1-encoding
+    reasoning as Step 5; a literal Voided = 1 filter would return 0 rows
+    in this dataset)
+  - added column voidStatus, filled "void" for every row
+  - the following 11 monetary/quantity columns were then multiplied by
+    -1 (voided transactions recorded as negative/reversal amounts):
+    ADDFEE, AGENTCHARGE, NETFARE, NIGHTS, ORGAMT, RealNETFARE, RealTAX,
+    SUBTOTAL, SUBTOTALORG, TAX, VAT
+  - 3 rows x 132 columns
+
+
+STEP 7 — output_all.xlsx
+----------------------------------------
+Source files: output/output_active.xlsx + output/output_void.xlsx
+Logic:        row-concatenation of the two files (columns are identical
+               after Step 6, so no realignment needed)
+Result:        592 rows (589 voidStatus="all" + 3 voidStatus="void") x
+               132 columns
+Note:          the 3 rows also appear once in output_active.xlsx (as
+               "all", with their original positive sign) and again here
+               as "void" (with the 11 columns negated) — output_all.xlsx
+               is a union, not a deduplicated dataset.
+
+
 FINAL OUTPUT
 ----------------------------------------
-output/output.xlsx — 589 rows x 131 columns
-  = 122 original columns
+output/output.xlsx        — 589 rows x 131 columns (Steps 1-5)
+output/output_active.xlsx — 589 rows x 132 columns (Step 6)
+output/output_void.xlsx   —   3 rows x 132 columns (Step 6)
+output/output_all.xlsx    — 592 rows x 132 columns (Step 7)
+
+output.xlsx = 122 original columns
   + businessUnit, subBusinessUnit   (Step 1)
   + productNew, subProduct          (Step 2)
   + Channels, subChannels           (Step 3)
   + Market, subMarket               (Step 4)
   + reportDate                      (Step 5)
+output_active.xlsx / output_void.xlsx / output_all.xlsx additionally add:
+  + voidStatus                      (Step 6)
