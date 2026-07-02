@@ -1,0 +1,110 @@
+PROCESS LOG — rawData/original.xlsx -> output/output.xlsx
+============================================================
+
+Source: rawData/original.xlsx (589 rows, 122 columns)
+Output: output/output.xlsx    (589 rows, 130 columns)
+
+8 columns were added, in this order, each derived from a rule file in
+dataFilter/. Rule files are Qlik-style nested If()/LOAD-WHERE scripts;
+each was parsed into an ordered list of (condition, value) rules and
+applied to every row (first matching rule wins).
+
+
+STEP 1 — businessUnit, subBusinessUnit
+----------------------------------------
+Source columns: dataFilter/businessUnit.txt, dataFilter/subBusinessUnit.txt
+Keyed on:        Divisi
+Logic:           single nested If(Divisi = 'X', 'Y', ...) chain per file
+Default:         LEI (both files — subBusinessUnit's default was changed
+                  from 'DIS' to 'LEI' per request)
+Note:            'WSL' was added as an explicit WSL -> WSL rule in
+                  businessUnit.txt (it was already explicit in
+                  subBusinessUnit.txt) so both columns agree for WSL rows.
+
+Result counts (Divisi -> businessUnit / subBusinessUnit):
+  CC01 -> CTM / CTM      (268 rows)
+  WSL  -> WSL / WSL      (128 rows)
+  OPS  -> OPS / OPS      (82 rows)
+  SMS, SUB, PAT, BGR, SMB, PLS, KGD, PCP, PUR, EMP
+       -> LEI / LEI      (default, no explicit rule matched)
+
+
+STEP 2 — productNew, subProduct
+----------------------------------------
+Source column: dataFilter/product.txt (contains two If-chains in one file)
+Keyed on:       PCID
+Default:        passthrough of the original PCID value (no fixed default
+                literal — the else-branch is just "PCID")
+
+Result counts (PCID -> productNew / subProduct):
+  TXD -> COMPONENT  / TICKET DOMESTIC          (316 rows)
+  TXI -> COMPONENT  / TICKET INTERNATIONAL     (135 rows)
+  TRN -> COMPONENT  / AUXILIARY                (56 rows)
+  HTD -> COMPONENT  / HOTEL DOMESTIC           (33 rows)
+  GIT -> SPECIALIST / GIT                      (27 rows)
+  DOC -> COMPONENT  / DOCUMENT                 (9 rows)
+  INS -> COMPONENT  / AUXILIARY                (7 rows)
+  RNT -> COMPONENT  / AUXILIARY                (3 rows)
+  HTI -> COMPONENT  / HOTEL INTERNATIONAL      (2 rows)
+  MTP -> SPECIALIST / CORPORATE EVENT          (1 row)
+  (all PCID values in this dataset were covered by explicit rules —
+   the passthrough default never triggered)
+
+
+STEP 3 — Channels, subChannels
+----------------------------------------
+Source column: dataFilter/channel.txt (Qlik LOAD/Concatenate script, not a
+                simple If-chain — 19 separate LOAD blocks, each with its
+                own WHERE condition and static 'Channels'/'subChannels2'
+                values)
+Keyed on:       Divisi, ClientSegment, ClientName, InvoiceID (conditions
+                combined with and/or/<>/like, evaluated in block order —
+                first matching block wins)
+Default:        none — the 19 blocks are a complete partition; every row
+                in this dataset matched exactly one block (0 unmatched)
+
+Result counts (Divisi, ClientSegment -> Channels / subChannels):
+  CC01 / CA -> OFFLINE / CORPORATE CONTACT CENTER   (187 rows)
+  WSL  / SA -> NETWORK / WHOLESALE                  (128 rows)
+  CC01 / CO -> OFFLINE / CORPORATE CONTACT CENTER   (79 rows)
+  OPS  / SA -> NETWORK / WHOLESALE                  (67 rows)
+  SMS  / RT -> OFFLINE / JAKARTA BRANCH             (20 rows)
+  SUB  / RT -> OFFLINE / OUTSIDE JAKARTA BRANCH     (18 rows)
+  PAT  / RT -> OFFLINE / JAKARTA BRANCH             (17 rows)
+  OPS  / SC -> NETWORK / WHOLESALE                  (15 rows)
+  BGR  / RT -> OFFLINE / JAKARTA BRANCH             (11 rows)
+  SMB  / RT -> OFFLINE / JAKARTA BRANCH             (11 rows)
+  PLS  / RT -> OFFLINE / JAKARTA BRANCH             (9 rows)
+  KGD  / RT -> OFFLINE / JAKARTA BRANCH             (8 rows)
+  PCP  / RT -> OFFLINE / JAKARTA BRANCH             (8 rows)
+  PUR  / RT -> OFFLINE / JAKARTA BRANCH             (5 rows)
+  EMP  / RT -> OFFLINE / JAKARTA BRANCH             (4 rows)
+  CC01 / RT -> OFFLINE / CORPORATE CONTACT CENTER   (2 rows)
+
+
+STEP 4 — Market, subMarket
+----------------------------------------
+Source column: dataFilter/market.txt (same LOAD/Concatenate-with-WHERE
+                style as channel.txt — 12 blocks)
+Keyed on:       Divisi, ClientSegment, ClientName, InvoiceID, plus the
+                already-derived subProduct (Step 2) and subChannels
+                (Step 3) columns — this step must run AFTER Steps 2 and 3
+Default:        none — 12 blocks form a complete partition; every row
+                matched exactly one block (0 unmatched)
+
+Result counts (Market / subMarket):
+  AGENTS    / SUB AGENT           (195 rows)
+  CORPORATE / CORPORATE TRAVEL    (187 rows)
+  LEISURE   / LEISURE INDIVIDUAL  (165 rows)
+  LEISURE   / LEISURE GROUP       (27 rows)
+  AGENTS    / SISTER COMPANY      (15 rows)
+
+
+FINAL OUTPUT
+----------------------------------------
+output/output.xlsx — 589 rows x 130 columns
+  = 122 original columns
+  + businessUnit, subBusinessUnit   (Step 1)
+  + productNew, subProduct          (Step 2)
+  + Channels, subChannels           (Step 3)
+  + Market, subMarket               (Step 4)
