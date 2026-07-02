@@ -6,3 +6,6 @@ test_data/
 pipeline.log
 *.log
 .claude/
+dataFilter/
+output/
+rawData/
