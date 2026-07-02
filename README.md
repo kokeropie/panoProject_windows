@@ -1,5 +1,7 @@
 # Kafka-to-Excel Data Pipeline (KEDP)
 
+[![Build Status](https://github.com/kokeropie/testProject/actions/workflows/ci.yml/badge.svg)](https://github.com/kokeropie/testProject/actions/workflows/ci.yml)
+
 Consumes JSON messages from a Kafka topic, saves them as individual files, and compiles them into a daily Excel report at 01:00 AM Jakarta time.
 
 ```
