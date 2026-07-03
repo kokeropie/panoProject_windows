@@ -1,8 +1,11 @@
-# Kafka-to-Excel Data Pipeline (KEDP)
+# Kafka-to-Excel Data Pipeline (KEDP) + Transform Stage
 
 [![Build Status](https://github.com/kokeropie/testProject/actions/workflows/ci.yml/badge.svg)](https://github.com/kokeropie/testProject/actions/workflows/ci.yml)
 
-Consumes JSON messages from a Kafka topic, saves them as individual files, and compiles them into a daily Excel report at 01:00 AM Jakarta time.
+This repo holds two independent pipelines:
+
+1. **KEDP ingest/compile** — consumes JSON messages from a Kafka topic, saves them as individual files, and compiles them into a daily Excel report at 01:00 AM Jakarta time. Covered below.
+2. **[Transform stage](#transform-stage)** — takes a raw export and derives 10 business columns via a rule engine, splitting active/void rows into 4 report-ready workbooks, with a Streamlit UI for editing rules and scheduling unattended runs.
 
 ```
 [ Kafka Broker ]
@@ -169,4 +172,90 @@ python consumer.py
 
 :: Run compiler immediately (processes whatever is in Raw_JSON\ right now)
 python compiler.py
+```
+
+---
+
+## Transform Stage
+
+Takes a raw export (originally a manual, undocumented Qlik process) and derives 10 business columns via a first-match-wins rule engine, splits active/void rows, and produces 4 report-ready workbooks. Has a Streamlit UI for editing the rules, running the transform, and scheduling unattended runs via Windows Task Scheduler.
+
+See `spec.txt` for the full, authoritative spec (8-step derivation, rule file formats, reference row/column counts). `prd.txt` and `process.txt` are historical design notes that predate the rule editor and Schedule feature.
+
+### What it does
+
+```
+raw export (.csv/.xls/.xlsx)
+      │
+      ▼  pipeline.py — Steps 1-6: derive businessUnit, subBusinessUnit,
+      │                 productNew, subProduct, Channels, subMarket,
+      │                 reportDate, mgmtRpt (first-match-wins rules)
+      ▼  Step 7: split into active / void by voidStatus
+      ▼  Step 8: union active + void
+[ output.xlsx / output_active.xlsx / output_void.xlsx / output_all.xlsx ]
+```
+
+Each derived column is decided by conditions stored in `rules/*.json` (canonical DNF), evaluated by `rules_engine.py` — not hardcoded in Python. Edit rules through the Streamlit rule editor, not by hand-editing `rules/*.json` directly.
+
+### Setup
+
+Same venv as KEDP above (`requirements.txt` covers both pipelines):
+
+```bat
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+### Running — UI
+
+```bat
+streamlit run app.py
+```
+
+Opens a browser tab with one page per derived step (Business Unit, Sub Business Unit, Product, Channel, Market, Report Date, Management Report) plus:
+
+- **Run Pipeline** — upload a CSV/XLS/XLSX (or pick a path via the file browser), run the transform, download the 4 output files
+- **Schedule** — configure a recurring `pipeline.py` run (daily/weekly/monthly/annually, start date, optional end date) and generate `register_scheduled_pipeline_task.bat`
+- **Config** — edit `rules/config.json` (nonzero-encoding toggle, Step 7 negation columns, etc.)
+
+Rule edits save straight to `rules/*.json`, which `pipeline.py` reads the next time it runs.
+
+### Running — CLI (no UI)
+
+```bat
+python pipeline.py <input.xlsx> --outdir output
+```
+
+Writes `output.xlsx`, `output_active.xlsx`, `output_void.xlsx`, `output_all.xlsx` to `--outdir` (defaults to `output\`). Every write goes through `write_excel_overwrite()`: an existing file at the target path is deleted before writing, so a re-run always fully replaces stale output. If the target file is open in Excel, the write fails with a clear "close it and try again" error instead of silently failing.
+
+### Scheduling unattended runs
+
+The Schedule page in `app.py` writes `schedule_config.json` and generates `register_scheduled_pipeline_task.bat` next to `pipeline.py`. Streamlit has no background job runner, so activating the schedule still requires manually running that `.bat` as Administrator on the Windows host — same pattern as `register_consumer_task.bat` / `register_compiler_task.bat` above:
+
+```bat
+register_scheduled_pipeline_task.bat
+```
+
+Query/run/remove the task the same way as the KEDP tasks (task name `KEDP_ScheduledPipeline`):
+
+```bat
+schtasks /Query  /TN "KEDP_ScheduledPipeline" /FO LIST /V
+schtasks /Run    /TN "KEDP_ScheduledPipeline"
+schtasks /Delete /TN "KEDP_ScheduledPipeline" /F
+```
+
+### File Structure
+
+```
+pipeline.py           Transform stage: 8-step derivation + CLI entry point
+rules_engine.py       Shared rule model (canonical DNF) + evaluator
+rule_importer.py      One-time parser: dataFilter/*.txt -> rules/*.json
+                      (re-running it overwrites rules/*.json, discarding
+                      any edits made through the app)
+app.py                Streamlit UI: rule editor, Run Pipeline, Schedule, Config
+scheduler.py          Schedule config I/O + schtasks/.bat generation
+path_picker.py        Cross-platform file/folder browser widget
+build_mgmt_report.py  One-off script: adds mgmtRpt to an existing output_all.xlsx
+rules/*.json          Canonical rule storage pipeline.py reads at run time
 ```
