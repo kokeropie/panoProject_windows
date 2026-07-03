@@ -2,9 +2,9 @@ PROCESS LOG — rawData/original.xlsx -> output/output.xlsx
 ============================================================
 
 Source: rawData/original.xlsx (589 rows, 122 columns)
-Output: output/output.xlsx    (589 rows, 131 columns)
+Output: output/output.xlsx    (589 rows, 132 columns)
 
-9 columns were added, in this order, each derived from a rule file in
+10 columns were added, in this order, each derived from a rule file in
 dataFilter/. Rule files are Qlik-style nested If()/LOAD-WHERE scripts;
 each was parsed into an ordered list of (condition, value) rules and
 applied to every row (first matching rule wins).
@@ -123,14 +123,43 @@ Default:        none — the 6 conditions are exhaustive over
                 (date-vs-DATEOFSERVICESTART); 0 nulls in this dataset.
 
 
-STEP 6 — output_active.xlsx / output_void.xlsx split
+STEP 6 — mgmtRpt
 ----------------------------------------
-Source file: output/output.xlsx (589 rows, 131 columns)
+Source column: dataFilter/mgmtRpt.txt (same LOAD/Concatenate-with-WHERE
+                style as channel.txt/market.txt — 19 blocks, one commented
+                out with `//Where ...;` and skipped)
+Keyed on:       subBusinessUnit (Step 1), clientSegment, subProduct
+                (Step 2), Divisi, newPCID, marker, Channels (Step 3) — must
+                run AFTER Steps 1, 2, and 3
+Default:        none — first matching block wins; unmatched rows are left
+                null (0 unmatched in this dataset)
+Note:           newPCID and marker aren't present in this input schema, so
+                the two rules that reference them (MOSLEM, PRIORITAS) can
+                only fire via their other OR-legs (Divisi = 'MOS' /
+                clientSegment = 'PP' or Divisi = 'PRI') — neither matched
+                any row in this dataset.
+
+Result counts (condition -> mgmtRpt):
+  subBusinessUnit = CTM                                    -> CTM        (268 rows)
+  subBusinessUnit = WSL or clientSegment = PW               -> WHOLESALE  (128 rows)
+  clientSegment in {SA, SC}, excluding Divisi in
+    {ASP, ATO, BOP, FSL, FSD, VPS, WSL}                      -> WHOLESALE  (82 rows)
+  subBusinessUnit = LEI, excluding Divisi in
+    {AGP, ASP, ATO, BOP, FSD, FSL, OHD, ONC, OSS, PAG,
+     PRI, MOS, SAB, UMO, UMO01, OPS, PAT}                     -> BRANCH     (94 rows)
+  subProduct in {GIT, FIT}                                   -> LEI        (13 rows)
+  clientSegment = RT, excluding subProduct GIT/FIT,
+    subBusinessUnit ORN/CTM/INH/WSL, Channels = ONLINE        -> LEI        (4 rows)
+
+
+STEP 7 — output_active.xlsx / output_void.xlsx split
+----------------------------------------
+Source file: output/output.xlsx (589 rows, 132 columns)
 
 output_active.xlsx:
   - full copy of all 589 rows
   - added column voidStatus, filled "all" for every row
-  - 589 rows x 132 columns
+  - 589 rows x 133 columns
 
 output_void.xlsx:
   - copy of only rows where Voided <> 0 (3 rows — same -1-encoding
@@ -141,16 +170,16 @@ output_void.xlsx:
     -1 (voided transactions recorded as negative/reversal amounts):
     ADDFEE, AGENTCHARGE, NETFARE, NIGHTS, ORGAMT, RealNETFARE, RealTAX,
     SUBTOTAL, SUBTOTALORG, TAX, VAT
-  - 3 rows x 132 columns
+  - 3 rows x 133 columns
 
 
-STEP 7 — output_all.xlsx
+STEP 8 — output_all.xlsx
 ----------------------------------------
 Source files: output/output_active.xlsx + output/output_void.xlsx
 Logic:        row-concatenation of the two files (columns are identical
-               after Step 6, so no realignment needed)
+               after Step 7, so no realignment needed)
 Result:        592 rows (589 voidStatus="all" + 3 voidStatus="void") x
-               132 columns
+               133 columns
 Note:          the 3 rows also appear once in output_active.xlsx (as
                "all", with their original positive sign) and again here
                as "void" (with the 11 columns negated) — output_all.xlsx
@@ -159,10 +188,10 @@ Note:          the 3 rows also appear once in output_active.xlsx (as
 
 FINAL OUTPUT
 ----------------------------------------
-output/output.xlsx        — 589 rows x 131 columns (Steps 1-5)
-output/output_active.xlsx — 589 rows x 132 columns (Step 6)
-output/output_void.xlsx   —   3 rows x 132 columns (Step 6)
-output/output_all.xlsx    — 592 rows x 132 columns (Step 7)
+output/output.xlsx        — 589 rows x 132 columns (Steps 1-6)
+output/output_active.xlsx — 589 rows x 133 columns (Step 7)
+output/output_void.xlsx   —   3 rows x 133 columns (Step 7)
+output/output_all.xlsx    — 592 rows x 133 columns (Step 8)
 
 output.xlsx = 122 original columns
   + businessUnit, subBusinessUnit   (Step 1)
@@ -170,5 +199,6 @@ output.xlsx = 122 original columns
   + Channels, subChannels           (Step 3)
   + Market, subMarket               (Step 4)
   + reportDate                      (Step 5)
+  + mgmtRpt                         (Step 6)
 output_active.xlsx / output_void.xlsx / output_all.xlsx additionally add:
-  + voidStatus                      (Step 6)
+  + voidStatus                      (Step 7)

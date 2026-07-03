@@ -125,9 +125,12 @@ def import_product() -> dict:
 def _import_where_blocks(path: Path, step_name: str, label: str,
                           key_columns: list[str], output_columns: list[str],
                           value_markers: list[str]) -> dict:
-    """channel.txt / market.txt: LOAD ... 'val' as Col1, 'val' as Col2 ... WHERE cond;
-    repeated N times via Concatenate. First matching block wins, no default."""
+    """channel.txt / market.txt / mgmtRpt.txt: LOAD ... 'val' as Col1, 'val' as Col2 ...
+    WHERE cond; repeated N times via Concatenate. First matching block wins, no default.
+    Full-line `//` comments are dropped first — mgmtRpt.txt has a commented-out
+    `//Where ...;` block that would otherwise be mistaken for a real one."""
     text = path.read_text()
+    text = "\n".join(line for line in text.splitlines() if not line.strip().startswith("//"))
     where_matches = list(re.finditer(r"Where\s+(.*?);", text, re.DOTALL | re.IGNORECASE))
     rules = []
     prev_end = 0
@@ -169,6 +172,16 @@ def import_market() -> dict:
                      "subProduct", "subChannels"],
         output_columns=["Market", "subMarket"],
         value_markers=["Market", "subMarket"],
+    )
+
+
+def import_mgmt_rpt() -> dict:
+    return _import_where_blocks(
+        DATA_FILTER_DIR / "mgmtRpt.txt", "mgmtRpt", "Management Report",
+        key_columns=["subBusinessUnit", "clientSegment", "subProduct", "Divisi",
+                     "newPCID", "marker", "Channels"],
+        output_columns=["mgmtRpt"],
+        value_markers=["mgmtRpt"],
     )
 
 
@@ -224,6 +237,7 @@ def run() -> None:
         "channel": import_channel(),
         "market": import_market(),
         "reportDate": import_report_date(),
+        "mgmtRpt": import_mgmt_rpt(),
     }
     for name, step_def in steps.items():
         out_path = RULES_DIR / f"{name}.json"

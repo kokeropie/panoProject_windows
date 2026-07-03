@@ -2,9 +2,9 @@
 Transform pipeline: input (csv/xls/xlsx) -> output.xlsx / output_active.xlsx /
 output_void.xlsx / output_all.xlsx, per prd.txt / process.txt.
 
-Steps 1-5 apply the rule-engine JSON in rules/*.json (edited via app.py) to
-derive 9 new columns. Step 6 splits active/void and negates the configured
-monetary columns for void rows. Step 7 concatenates the two into a union.
+Steps 1-6 apply the rule-engine JSON in rules/*.json (edited via app.py) to
+derive 10 new columns. Step 7 splits active/void and negates the configured
+monetary columns for void rows. Step 8 concatenates the two into a union.
 
 Usage (CLI):
     python pipeline.py rawData/original.xlsx
@@ -187,6 +187,14 @@ def step5_report_date(df: pd.DataFrame, column_aliases: dict, config: dict,
     return df
 
 
+def step6_mgmt_rpt(df: pd.DataFrame, column_aliases: dict, stats: dict | None = None) -> pd.DataFrame:
+    """Must run after step1 (needs subBusinessUnit), step2 (needs subProduct),
+    and step3 (needs Channels)."""
+    df = df.copy()
+    df["mgmtRpt"] = _apply_single_output_step(df, load_step("mgmtRpt"), column_aliases, stats)
+    return df
+
+
 def build_column_resolver(df: pd.DataFrame, config: dict) -> dict[str, str]:
     """Case-insensitive fallback for every input column (rule text was
     hand-written against a Qlik schema that doesn't always match this data's
@@ -204,14 +212,15 @@ def run_derivation_steps(df: pd.DataFrame, config: dict, stats: dict | None = No
     df = step3_channel(df, aliases, stats)
     df = step4_market(df, aliases, stats)
     df = step5_report_date(df, aliases, config, stats)
+    df = step6_mgmt_rpt(df, aliases, stats)
     return df
 
 
 # ---------------------------------------------------------------------------
-# Step 6-7: active/void split + union
+# Step 7-8: active/void split + union
 # ---------------------------------------------------------------------------
 
-def step6_active_void_split(df: pd.DataFrame, config: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+def step7_active_void_split(df: pd.DataFrame, config: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
     voided_col = config["voided_column"]
     active = df.copy()
     active["voidStatus"] = config["void_status_active_value"]
@@ -226,13 +235,13 @@ def step6_active_void_split(df: pd.DataFrame, config: dict) -> tuple[pd.DataFram
     for col in config["negation_columns"]:
         if col in void.columns:
             void[col] = void[col] * -1
-    log.info("step6: %d active row(s), %d void row(s)", len(active), len(void))
+    log.info("step7: %d active row(s), %d void row(s)", len(active), len(void))
     return active, void
 
 
-def step7_union(active: pd.DataFrame, void: pd.DataFrame) -> pd.DataFrame:
+def step8_union(active: pd.DataFrame, void: pd.DataFrame) -> pd.DataFrame:
     if list(active.columns) != list(void.columns):
-        raise ValueError("step7: active/void column schemas differ, refusing to concatenate")
+        raise ValueError("step8: active/void column schemas differ, refusing to concatenate")
     return pd.concat([active, void], ignore_index=True)
 
 
@@ -246,8 +255,8 @@ def run_pipeline(input_path: Path, outdir: Path) -> dict[str, Path]:
     log.info("loaded %s: %d rows x %d cols", input_path.name, *df.shape)
 
     output = run_derivation_steps(df, config)
-    active, void = step6_active_void_split(output, config)
-    all_rows = step7_union(active, void)
+    active, void = step7_active_void_split(output, config)
+    all_rows = step8_union(active, void)
 
     outdir.mkdir(parents=True, exist_ok=True)
     paths = {

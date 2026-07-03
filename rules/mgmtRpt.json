@@ -1,0 +1,784 @@
+{
+  "step": "mgmtRpt",
+  "label": "Management Report",
+  "key_columns": [
+    "subBusinessUnit",
+    "clientSegment",
+    "subProduct",
+    "Divisi",
+    "newPCID",
+    "marker",
+    "Channels"
+  ],
+  "output_columns": [
+    "mgmtRpt"
+  ],
+  "default": null,
+  "rules": [
+    {
+      "id": 1,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "subBusinessUnit",
+              "operator": "=",
+              "value": "CTM",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "CTM"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "clientSegment",
+              "operator": "=",
+              "value": "CA",
+              "negate": false
+            },
+            {
+              "column": "subBusinessUnit",
+              "operator": "<>",
+              "value": "CTM",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "CTM"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "clientSegment",
+              "operator": "=",
+              "value": "CO",
+              "negate": false
+            },
+            {
+              "column": "subBusinessUnit",
+              "operator": "<>",
+              "value": "CTM",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "CTM"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "subBusinessUnit",
+              "operator": "=",
+              "value": "ORN",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "ORANGE"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "subBusinessUnit",
+              "operator": "<>",
+              "value": "ORN",
+              "negate": false
+            },
+            {
+              "column": "subProduct",
+              "operator": "=",
+              "value": "INCENTIVE",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "ORANGE"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "Divisi",
+              "operator": "=",
+              "value": "MOS",
+              "negate": false
+            }
+          ],
+          [
+            {
+              "column": "newPCID",
+              "operator": "=",
+              "value": "UMO",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "MOSLEM"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "clientSegment",
+              "operator": "=",
+              "value": "PP",
+              "negate": false
+            }
+          ],
+          [
+            {
+              "column": "Divisi",
+              "operator": "=",
+              "value": "PRI",
+              "negate": false
+            }
+          ],
+          [
+            {
+              "column": "marker",
+              "operator": "=",
+              "value": "PRI",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "PRIORITAS"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "Divisi",
+              "operator": "=",
+              "value": "PAG",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "PAG"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "subBusinessUnit",
+              "operator": "=",
+              "value": "WSL",
+              "negate": false
+            }
+          ],
+          [
+            {
+              "column": "clientSegment",
+              "operator": "=",
+              "value": "PW",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "WHOLESALE"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "Divisi",
+              "operator": "=",
+              "value": "ASP",
+              "negate": false
+            }
+          ],
+          [
+            {
+              "column": "Divisi",
+              "operator": "=",
+              "value": "ATI",
+              "negate": false
+            }
+          ],
+          [
+            {
+              "column": "Divisi",
+              "operator": "=",
+              "value": "ATO",
+              "negate": false
+            }
+          ],
+          [
+            {
+              "column": "Divisi",
+              "operator": "=",
+              "value": "VPS",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "WHOLESALE"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "clientSegment",
+              "operator": "=",
+              "value": "SA",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "ASP",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "ATO",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "BOP",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "FSL",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "FSD",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "VPS",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "WSL",
+              "negate": false
+            }
+          ],
+          [
+            {
+              "column": "clientSegment",
+              "operator": "=",
+              "value": "SC",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "ASP",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "ATO",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "BOP",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "FSL",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "FSD",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "VPS",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "WSL",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "WHOLESALE"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "subBusinessUnit",
+              "operator": "=",
+              "value": "INH",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "INHOUSE"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "subBusinessUnit",
+              "operator": "=",
+              "value": "LEI",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "AGP",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "ASP",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "ATO",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "BOP",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "FSD",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "FSL",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "OHD",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "ONC",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "OSS",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "PAG",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "PRI",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "MOS",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "SAB",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "UMO",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "UMO01",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "OPS",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "<>",
+              "value": "PAT",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "BRANCH"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "Channels",
+              "operator": "=",
+              "value": "ONLINE",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "ONLINE"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "subProduct",
+              "operator": "=",
+              "value": "GIT",
+              "negate": false
+            }
+          ],
+          [
+            {
+              "column": "subProduct",
+              "operator": "=",
+              "value": "FIT",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "LEI"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "clientSegment",
+              "operator": "=",
+              "value": "RT",
+              "negate": false
+            },
+            {
+              "column": "subProduct",
+              "operator": "<>",
+              "value": "GIT",
+              "negate": false
+            },
+            {
+              "column": "subProduct",
+              "operator": "<>",
+              "value": "FIT",
+              "negate": false
+            },
+            {
+              "column": "subBusinessUnit",
+              "operator": "<>",
+              "value": "ORN",
+              "negate": false
+            },
+            {
+              "column": "subBusinessUnit",
+              "operator": "<>",
+              "value": "CTM",
+              "negate": false
+            },
+            {
+              "column": "subBusinessUnit",
+              "operator": "<>",
+              "value": "INH",
+              "negate": false
+            },
+            {
+              "column": "subBusinessUnit",
+              "operator": "<>",
+              "value": "WSL",
+              "negate": false
+            },
+            {
+              "column": "Channels",
+              "operator": "<>",
+              "value": "ONLINE",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "LEI"
+        }
+      }
+    },
+    {
+      "id": 17,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "clientSegment",
+              "operator": "=",
+              "value": "PP",
+              "negate": false
+            },
+            {
+              "column": "subProduct",
+              "operator": "<>",
+              "value": "GIT",
+              "negate": false
+            },
+            {
+              "column": "subProduct",
+              "operator": "<>",
+              "value": "FIT",
+              "negate": false
+            },
+            {
+              "column": "subBusinessUnit",
+              "operator": "<>",
+              "value": "ORN",
+              "negate": false
+            },
+            {
+              "column": "subBusinessUnit",
+              "operator": "<>",
+              "value": "CTM",
+              "negate": false
+            },
+            {
+              "column": "subBusinessUnit",
+              "operator": "<>",
+              "value": "INH",
+              "negate": false
+            },
+            {
+              "column": "subBusinessUnit",
+              "operator": "<>",
+              "value": "WSL",
+              "negate": false
+            },
+            {
+              "column": "Channels",
+              "operator": "<>",
+              "value": "ONLINE",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "LEI"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "Divisi",
+              "operator": "=",
+              "value": "PAT",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "PATSY"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "condition": {
+        "any": [
+          [
+            {
+              "column": "clientSegment",
+              "operator": "=",
+              "value": "MC",
+              "negate": false
+            },
+            {
+              "column": "Divisi",
+              "operator": "=",
+              "value": "PCP",
+              "negate": false
+            }
+          ]
+        ]
+      },
+      "result": {
+        "mgmtRpt": {
+          "type": "literal",
+          "value": "LEI"
+        }
+      }
+    }
+  ]
+}

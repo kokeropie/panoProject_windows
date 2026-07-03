@@ -4,8 +4,9 @@ process.txt).
 
 Lets you view, add, edit, delete, and reorder the business rules for each
 derived-column step (Business Unit, Sub Business Unit, Product, Channel,
-Market, Report Date) without hand-editing dataFilter/*.txt, and upload a
-CSV/XLS/XLSX file to run the full transform and download the 4 output files.
+Market, Report Date, Management Report) without hand-editing dataFilter/*.txt,
+and upload a CSV/XLS/XLSX file to run the full transform and download the 4
+output files.
 Rule edits are saved straight to rules/*.json, which pipeline.py reads when
 it actually runs the transform.
 
@@ -26,8 +27,8 @@ from pipeline import (
     load_config as load_pipeline_config,
     read_input,
     run_derivation_steps,
-    step6_active_void_split,
-    step7_union,
+    step7_active_void_split,
+    step8_union,
 )
 from rules_engine import condition_to_text, parse_condition_dnf, result_to_text
 
@@ -43,6 +44,7 @@ STEP_PAGES = {
     "Channel": {"file": "channel.json", "kind": "single", "has_default": False},
     "Market": {"file": "market.json", "kind": "single", "has_default": False},
     "Report Date": {"file": "reportDate.json", "kind": "single", "has_default": False},
+    "Management Report": {"file": "mgmtRpt.json", "kind": "single", "has_default": False},
     "Config": {"file": "config.json", "kind": "config", "has_default": None},
 }
 
@@ -247,7 +249,7 @@ def to_excel_bytes(df: pd.DataFrame) -> bytes:
 
 def render_run_page() -> None:
     st.header("Run Pipeline")
-    st.caption("Upload a CSV/XLS/XLSX file, run the full transform (Steps 1-7), "
+    st.caption("Upload a CSV/XLS/XLSX file, run the full transform (Steps 1-8), "
                "and preview or download the 4 output files.")
 
     sample_available = SAMPLE_DATA_PATH.exists()
@@ -283,8 +285,8 @@ def render_run_page() -> None:
         with st.spinner("Running..."):
             try:
                 output = run_derivation_steps(df, config, stats)
-                active, void = step6_active_void_split(output, config)
-                all_rows = step7_union(active, void)
+                active, void = step7_active_void_split(output, config)
+                all_rows = step8_union(active, void)
             except Exception as e:
                 st.error(f"Pipeline failed: {e}")
                 return
@@ -392,7 +394,7 @@ def render_config_page() -> None:
         voided_literal = st.number_input("Literal value used in the rule text (usually 1)",
                                           value=int(config["voided_literal_in_rules"]), step=1)
 
-        st.subheader("Active/void split (Step 6)")
+        st.subheader("Active/void split (Step 7)")
         negation_cols = st.text_area(
             "Columns to negate (×-1) on void rows, comma-separated",
             value=", ".join(config["negation_columns"]), height=80,
