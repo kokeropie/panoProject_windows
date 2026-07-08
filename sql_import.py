@@ -118,6 +118,24 @@ def read_password(config: dict, cli_password: str | None = None) -> str | None:
     return os.environ.get("MSSQL_PASSWORD")
 
 
+_MSSQL_MAX_PARAMS = 2100  # SQL Server's hard limit on bound parameters per statement
+_MSSQL_PARAM_SAFETY_MARGIN = 100  # headroom below the hard limit
+
+
+def _safe_chunksize(configured: int, n_columns: int) -> int:
+    """pandas.to_sql(method="multi") packs `chunksize` rows into a single
+    INSERT, so `chunksize x n_columns` bound parameters must stay under
+    SQL Server's ~2100-parameter ceiling. A wide table (e.g. this repo's
+    77-133 column output workbooks) blows past that with the default
+    chunksize=1000 long before row count is the limiting factor — 1000
+    rows x 77 columns = 77,000 parameters, so the very first batch insert
+    is rejected outright (the table's already-committed DDL is why you'd
+    see an empty table rather than an error at first glance). Cap
+    chunksize to whatever actually fits this table's width."""
+    max_rows = max(1, (_MSSQL_MAX_PARAMS - _MSSQL_PARAM_SAFETY_MARGIN) // max(n_columns, 1))
+    return min(configured, max_rows)
+
+
 def import_xlsx_to_sql(xlsx_path: Path, config: dict, password: str | None = None) -> dict:
     """Reads xlsx_path with pandas and loads it into config['table'].
 
@@ -154,13 +172,22 @@ def import_xlsx_to_sql(xlsx_path: Path, config: dict, password: str | None = Non
                 conn.execute(text(f"TRUNCATE TABLE {table}"))
                 log.info("truncated existing table %s before load", table)
 
+    configured_chunksize = config.get("chunksize", 1000)
+    chunksize = _safe_chunksize(configured_chunksize, len(df.columns))
+    if chunksize < configured_chunksize:
+        log.info(
+            "reduced chunksize from %d to %d row(s)/batch to keep this %d-column "
+            "table's INSERT statements under SQL Server's ~%d parameter limit",
+            configured_chunksize, chunksize, len(df.columns), _MSSQL_MAX_PARAMS,
+        )
+
     df.to_sql(
         _split_schema_table(table)[1],
         engine,
         schema=_split_schema_table(table)[0],
         if_exists="append",
         index=False,
-        chunksize=config.get("chunksize", 1000),
+        chunksize=chunksize,
         method="multi",
     )
 
