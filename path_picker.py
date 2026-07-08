@@ -28,15 +28,34 @@ def _safe_key(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", text)[-60:]
 
 
+def _safe_is_dir(path: Path) -> bool:
+    """Path.is_dir() re-raises OSError for errno codes it doesn't
+    recognize as "missing" (e.g. EACCES) instead of returning False —
+    Windows drive roots commonly have entries like 'System Volume
+    Information' a non-admin account can't stat. Treat any stat failure
+    as "skip this entry" rather than crashing the whole listing."""
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
+
+
+def _safe_is_file(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
 def _list_dir(path: Path, file_extensions: tuple[str, ...] | None) -> tuple[list[Path], list[Path]]:
     try:
         entries = sorted(path.iterdir(), key=lambda p: p.name.lower())
     except (PermissionError, FileNotFoundError, NotADirectoryError, OSError):
         return [], []
-    dirs = [p for p in entries if p.is_dir() and not p.name.startswith(".")]
+    dirs = [p for p in entries if _safe_is_dir(p) and not p.name.startswith(".")]
     files: list[Path] = []
     if file_extensions is not None:
-        files = [p for p in entries if p.is_file() and p.suffix.lower() in file_extensions]
+        files = [p for p in entries if _safe_is_file(p) and p.suffix.lower() in file_extensions]
     return dirs, files
 
 
