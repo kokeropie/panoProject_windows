@@ -3,7 +3,11 @@ PROCESS LOG — rawData/original.xlsx -> output/output.xlsx
 Note: this is a log of one specific reference run, kept for its exact
 per-rule "Result counts" (used as the acceptance-test fixture). For the
 current, full spec of the app — the rule engine, the Streamlit UI,
-scheduling, and force-overwrite write behavior — see spec.txt.
+scheduling, and force-overwrite write behavior — see spec.txt. A second
+run, against rawData/Detail.xlsx, is logged separately at the bottom of
+this file ("SECOND RUN") — it exercises the same 8 steps plus two new
+pipeline-wide steps (9: verification, 10: comma sanitization) added
+across pipeline.py and app.py to support it.
 
 Source: rawData/original.xlsx (589 rows, 122 columns)
 Output: output/output.xlsx    (589 rows, 132 columns)
@@ -217,3 +221,203 @@ This run was triggered from the CLI (`python pipeline.py rawData/original.xlsx`)
 The same 8 steps run identically from the Streamlit "Run Pipeline" page
 and from an unattended Windows Task Scheduler job configured on the
 Schedule page — see spec.txt sections 6 and 8.
+
+
+STEP 9 — verify_outputs() (new, applies to every run)
+----------------------------------------
+Runs right after Step 8, before any file is written. Sanity-checks the
+derived output and returns a list of OK/WARN lines (never raises — these
+are data sanity checks, not code invariants):
+  - output column count == source columns + 10 derived columns
+  - output row count == source row count
+  - null count per derived column (businessUnit, subBusinessUnit,
+    productNew, subProduct, Channels, subChannels, Market, subMarket,
+    reportDate, mgmtRpt)
+  - output_void.xlsx row count matches rows where the Voided column
+    (config voided_column) looks voided
+  - output_active.xlsx row count matches output.xlsx
+  - output_all.xlsx row count == active + void
+  - for each configured negation_column, that the void-row magnitude
+    matches the corresponding active row
+Written to <outdir>/verification_report.txt alongside the 4 workbooks;
+also logged line-by-line (WARN lines via log.warning). Surfaced in the
+Streamlit app under a "Verification report" expander (auto-expanded if
+any check warns).
+
+STEP 10 — sanitize_commas() (new, applies to every run)
+----------------------------------------
+Runs after Step 9, right before writing. Every text/object column in all
+4 output DataFrames has ',' replaced with ' ' in every string cell
+(numbers, dates, and NaN are left untouched). Applied identically by the
+CLI (pipeline.py) and the Streamlit "Run Pipeline" page (app.py).
+
+
+SCHEMA-ADAPTATION FEATURES (new, config-driven, no-op on original.xlsx)
+----------------------------------------
+Added to support inputs shaped differently from original.xlsx (see the
+Detail.xlsx run below) without touching the original.xlsx code path.
+All three are configured in rules/config.json and are no-ops when the
+condition they check for doesn't apply — verified against original.xlsx
+above (589/589/3/592 rows, 0 warnings, identical to the pre-change log).
+
+  - drop_incomplete_rows(): drops rows where config.required_nonnull_column
+    (InvoiceID) is null, before any derivation step runs. original.xlsx
+    has 0 such rows (no-op there).
+  - ensure_voided_column(): if config.voided_column (Voided) isn't in the
+    input at all, derives it (1/0) from config.voided_fallback_source_column
+    (VoidDate) being non-null. original.xlsx already has Voided (no-op).
+  - column_fallbacks in config ({"PCID": "newPCID"}): build_column_resolver()
+    only applies a fallback when the canonical column (PCID) is genuinely
+    absent from the input, so original.xlsx (which has real PCID) is
+    unaffected.
+
+
+============================================================
+SECOND RUN — rawData/Detail.xlsx -> output/detail/*.xlsx
+============================================================
+Triggered from the CLI (`python pipeline.py rawData/Detail.xlsx --outdir
+output/detail`). Unlike original.xlsx, Detail.xlsx is a much larger,
+differently-shaped export (3149 rows, 77 columns) that already carries
+partially-filled businessUnit/productNew/Channels/Market/subMarket/
+voidStatus-style columns from whatever process produced it, and is
+missing PCID and Voided outright. The schema-adaptation features above
+were added specifically to make this run possible without touching the
+original.xlsx path.
+
+Source: rawData/Detail.xlsx        (3149 rows, 77 columns)
+
+STEP 0 — pre-processing (new)
+----------------------------------------
+  - drop_incomplete_rows(): 1224 of 3149 rows had a null InvoiceID and
+    were otherwise entirely blank (every other column null/NaT) — export
+    padding artifacts, not real transactions. Dropped, leaving 1925 rows.
+  - ensure_voided_column(): Detail.xlsx has no Voided column. Derived
+    Voided = 1 where VoidDate is non-null, else 0 (200 rows voided).
+  - column_fallbacks resolves PCID -> newPCID for Step 2 (Detail.xlsx has
+    no PCID column, but newPCID carries the same vocabulary: TXD, TXI,
+    TRN, HTD, GIT, DOC, INS, RNT, HTI, MTP, plus new-to-this-dataset
+    codes INC, GTV, MSC, FIT).
+
+Working row count from here on: 1925 rows.
+
+STEP 1 — businessUnit, subBusinessUnit
+----------------------------------------
+Result counts (Divisi -> businessUnit / subBusinessUnit):
+  CC01            -> CTM / CTM   (1371 rows)
+  WSL             -> WSL / WSL    (393 rows)
+  OAM 2, OAM 5    -> ORN / ORN     (20 rows)
+  SUB, PAT, HOT, KGD, PLS, PIM, BGR, PRI, PUR, PCP, EMP, BDO, SMB
+                  -> LEI / LEI    (141 rows, default — no explicit rule matched)
+
+STEP 2 — productNew, subProduct
+----------------------------------------
+Keyed on newPCID (via column_fallbacks, in place of PCID).
+Result counts (newPCID -> productNew / subProduct):
+  TXD -> COMPONENT  / TICKET DOMESTIC          (1054 rows)
+  HTD -> COMPONENT  / HOTEL DOMESTIC            (329 rows)
+  TRN -> COMPONENT  / AUXILIARY                 (219 rows)
+  TXI -> COMPONENT  / TICKET INTERNATIONAL      (195 rows)
+  INS -> COMPONENT  / AUXILIARY                  (25 rows)
+  DOC -> COMPONENT  / DOCUMENT                   (22 rows)
+  INC -> SPECIALIST / INCENTIVE                  (20 rows)
+  RNT -> COMPONENT  / AUXILIARY                  (18 rows)
+  HTI -> COMPONENT  / HOTEL INTERNATIONAL        (13 rows)
+  MSC -> OTHER      / OTHER FEE                  (13 rows)
+  GIT -> SPECIALIST / GIT                          (6 rows)
+  FIT -> SPECIALIST / FIT                          (5 rows)
+  GTV -> GTV        / GTV                          (5 rows, passthrough
+                                                     default — GTV isn't in
+                                                     dataFilter/product.txt's
+                                                     vocabulary, so the
+                                                     else-branch just
+                                                     echoes newPCID back)
+  MTP -> SPECIALIST / CORPORATE EVENT              (1 row)
+
+STEP 3 — Channels, subChannels
+----------------------------------------
+Result counts (Divisi, clientSegment -> Channels / subChannels, top rows):
+  CC01  / CA -> OFFLINE / CORPORATE CONTACT CENTER  (1312 rows)
+  WSL   / SA -> NETWORK / WHOLESALE                  (288 rows)
+  WSL   / SC -> NETWORK / WHOLESALE                  (105 rows)
+  CC01  / RT -> OFFLINE / CORPORATE CONTACT CENTER    (59 rows)
+  SUB   / RT -> OFFLINE / OUTSIDE JAKARTA BRANCH       (29 rows)
+  PAT   / RT -> OFFLINE / JAKARTA BRANCH               (19 rows)
+  OAM 2 / CR -> OFFLINE / ORANGE                       (16 rows)
+  HOT   / RT -> OFFLINE / JAKARTA BRANCH               (15 rows)
+  KGD   / RT -> OFFLINE / JAKARTA BRANCH               (15 rows)
+  (remaining Divisi/clientSegment combinations account for the rest)
+
+STEP 4 — Market, subMarket
+----------------------------------------
+Result counts (Market / subMarket):
+  CORPORATE / CORPORATE TRAVEL     (1312 rows)
+  AGENTS    / SUB AGENT             (288 rows)
+  LEISURE   / LEISURE INDIVIDUAL    (192 rows)
+  AGENTS    / SISTER COMPANY        (107 rows)
+  CORPORATE / CORPORATE INCENTIVE    (20 rows)
+  LEISURE   / LEISURE GROUP           (6 rows)
+
+STEP 5 — reportDate
+----------------------------------------
+0 nulls across all 1925 rows (same "Voided <> 0" patch as the first run —
+here it fires against the Step-0-derived Voided column instead of a
+native one).
+
+STEP 6 — mgmtRpt
+----------------------------------------
+Result counts:
+  CTM         1371 rows
+  WHOLESALE    393 rows
+  BRANCH       115 rows
+  ORANGE        20 rows
+  LEI           19 rows
+  PRIORITAS      7 rows
+(0 unmatched)
+
+STEP 7 — output_active.xlsx / output_void.xlsx split
+----------------------------------------
+output_active.xlsx: 1925 rows x 80 columns (voidStatus = "all")
+output_void.xlsx:      200 rows x 80 columns (voidStatus = "void", the 11
+                       configured negation_columns multiplied by -1)
+
+STEP 8 — output_all.xlsx
+----------------------------------------
+2125 rows (1925 "all" + 200 "void") x 80 columns.
+
+STEP 9 — verification
+----------------------------------------
+14 checks run, 1 warning:
+  WARN output.xlsx has 80 columns, expected 88
+    Expected assumed all 10 derived columns are net-new. Detail.xlsx
+    already had 8 of the 10 (businessUnit, subBusinessUnit, productNew,
+    subProduct, Channels, subChannels, Market, subMarket) present as
+    input columns from whatever produced this export, so those 8 were
+    recomputed and overwritten in place rather than appended — only
+    reportDate and mgmtRpt are genuinely new columns (77 + 1 [Voided,
+    Step 0] + 2 = 80). Confirmed not a bug: all 10 derived columns have
+    0 nulls (see below) and the row/void/active/all count checks all
+    passed.
+  OK   all 10 derived columns: 0 nulls
+  OK   output_void.xlsx row count matches Voided-derived voided rows (200)
+  OK   output_active.xlsx row count matches output.xlsx (1925 rows)
+  OK   output_all.xlsx row count = active + void (1925 + 200 = 2125)
+Full text at output/detail/verification_report.txt.
+
+STEP 10 — comma sanitization
+----------------------------------------
+Applied to all 4 output workbooks. Source columns with literal commas in
+this dataset (City, ClientName, CostCenter, Division, HotelName, PAXNAME,
+TOURCODE, TOURCODE2, TypeBed, TypeRoom) confirmed comma-free in the
+output.
+
+
+FINAL OUTPUT (SECOND RUN)
+----------------------------------------
+output/detail/output.xlsx            — 1925 rows x 80 columns (Steps 1-6)
+output/detail/output_active.xlsx     — 1925 rows x 80 columns (Step 7)
+output/detail/output_void.xlsx       —  200 rows x 80 columns (Step 7)
+output/detail/output_all.xlsx        — 2125 rows x 80 columns (Step 8)
+output/detail/verification_report.txt — Step 9 output
+
+Written to output/detail/ rather than output/ so this run doesn't
+overwrite the original.xlsx reference fixture at the top of this file.

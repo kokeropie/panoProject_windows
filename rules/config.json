@@ -19,5 +19,10 @@
   "void_status_void_value": "void",
   "column_aliases": {
     "subChannels2": "subChannels"
-  }
+  },
+  "column_fallbacks": {
+    "PCID": "newPCID"
+  },
+  "required_nonnull_column": "InvoiceID",
+  "voided_fallback_source_column": "VoidDate"
 }

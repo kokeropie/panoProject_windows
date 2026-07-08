@@ -27,12 +27,17 @@ import streamlit as st
 from path_picker import path_picker
 from pipeline import (
     RULES_DIR,
+    drop_incomplete_rows,
+    ensure_voided_column,
     load_config as load_pipeline_config,
     read_input,
     run_derivation_steps,
+    sanitize_commas,
     step7_active_void_split,
     step8_union,
+    verify_outputs,
     write_excel_overwrite,
+    write_verification_report,
 )
 from rules_engine import condition_to_text, parse_condition_dnf, result_to_text
 from scheduler import (
@@ -303,15 +308,23 @@ def render_run_page() -> None:
         stats: dict = {}
         with st.spinner("Running..."):
             try:
+                df = drop_incomplete_rows(df, config)
+                df = ensure_voided_column(df, config)
                 output = run_derivation_steps(df, config, stats)
                 active, void = step7_active_void_split(output, config)
                 all_rows = step8_union(active, void)
+                checks = verify_outputs(df, output, active, void, all_rows, config)
+                output = sanitize_commas(output)
+                active = sanitize_commas(active)
+                void = sanitize_commas(void)
+                all_rows = sanitize_commas(all_rows)
             except Exception as e:
                 st.error(f"Pipeline failed: {e}")
                 return
 
         st.session_state["run_result"] = {
-            "output": output, "active": active, "void": void, "all": all_rows, "stats": stats,
+            "output": output, "active": active, "void": void, "all": all_rows,
+            "stats": stats, "checks": checks,
         }
 
         if save_to_disk:
@@ -320,6 +333,7 @@ def render_run_page() -> None:
                 write_excel_overwrite(active, OUTPUT_DIR / "output_active.xlsx")
                 write_excel_overwrite(void, OUTPUT_DIR / "output_void.xlsx")
                 write_excel_overwrite(all_rows, OUTPUT_DIR / "output_all.xlsx")
+                write_verification_report(checks, OUTPUT_DIR / "verification_report.txt")
             except OSError as e:
                 st.error(str(e))
             else:
@@ -341,6 +355,9 @@ def render_run_page() -> None:
         for step_name, counts in result["stats"].items():
             st.caption(step_name)
             render_match_count_table(counts)
+
+    with st.expander("Verification report", expanded=any(c.startswith("WARN") for c in result["checks"])):
+        st.code("\n".join(result["checks"]), language=None)
 
     st.subheader("Preview")
     preview_choice = st.selectbox("File", ["output", "active", "void", "all"], key="run_preview_choice")
