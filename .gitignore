@@ -9,3 +9,6 @@ pipeline.log
 dataFilter/
 output/
 rawData/
+sql_config.json
+sql_schedule_config.json
+register_scheduled_sql_import_task.bat

@@ -54,6 +54,25 @@ from scheduler import (
     validate_schedule_config,
     write_register_bat,
 )
+from sql_import import (
+    import_xlsx_to_sql,
+    load_sql_config,
+    save_sql_config,
+    validate_sql_config,
+    verify_import,
+)
+from sql_scheduler import (
+    REGISTER_SQL_BAT_PATH,
+    SQL_SCHEDULE_CONFIG_PATH,
+    TASK_NAME as SQL_TASK_NAME,
+    delete_sql_schedule_config,
+    format_sql_schtasks_command,
+    load_sql_schedule_config,
+    save_sql_schedule_config,
+    summarize_sql_schedule,
+    validate_sql_schedule_config,
+    write_sql_register_bat,
+)
 
 SAMPLE_DATA_PATH = Path(__file__).parent / "rawData" / "original.xlsx"
 OUTPUT_DIR = Path(__file__).parent / "output"
@@ -70,6 +89,8 @@ STEP_PAGES = {
     "Report Date": {"file": "reportDate.json", "kind": "single", "has_default": False},
     "Management Report": {"file": "mgmtRpt.json", "kind": "single", "has_default": False},
     "Config": {"file": "config.json", "kind": "config", "has_default": None},
+    "Import to SQL Server": {"kind": "sql_import"},
+    "Schedule SQL Import": {"kind": "sql_schedule"},
 }
 
 
@@ -526,6 +547,251 @@ def render_schedule_page() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Import to SQL Server page: load one of the transform stage's output .xlsx
+# files into a Microsoft SQL Server table (see sql_import.py). New, additive
+# page — doesn't touch Run Pipeline or Schedule above.
+# ---------------------------------------------------------------------------
+
+def render_sql_import_page() -> None:
+    st.header("Import to SQL Server")
+    st.caption(
+        "Load one of the transform stage's output .xlsx files into a SQL Server "
+        "table. Connection settings save to sql_config.json — the password never "
+        "does; see sql_import.py for the CLI equivalent."
+    )
+
+    xlsx_path = path_picker(
+        "sqlimp_xlsx", str(OUTPUT_DIR / "output_all.xlsx"), mode="file",
+        file_extensions=(".xlsx",), label="Input .xlsx file",
+    )
+
+    config = load_sql_config()
+    st.subheader("Connection")
+    c1, c2 = st.columns(2)
+    server = c1.text_input("Server", value=config["server"])
+    database = c2.text_input("Database", value=config["database"])
+    driver = st.text_input("ODBC driver", value=config["driver"])
+
+    auth_options = ["windows", "sql"]
+    auth = st.radio(
+        "Authentication", auth_options, horizontal=True,
+        index=auth_options.index(config.get("auth", "windows")),
+        format_func=lambda v: "Windows Authentication" if v == "windows" else "SQL Authentication",
+    )
+    username = ""
+    password = None
+    if auth == "sql":
+        c3, c4 = st.columns(2)
+        username = c3.text_input("Username", value=config.get("username", ""))
+        password = c4.text_input(
+            "Password", type="password",
+            help="Used only for this run and never written to disk. Scheduled/CLI "
+                 "runs read the MSSQL_PASSWORD environment variable instead.",
+        )
+
+    st.subheader("Target")
+    t1, t2 = st.columns(2)
+    table = t1.text_input("Table (schema.table)", value=config["table"])
+    if_exists_options = ["replace", "append"]
+    if_exists = t2.radio(
+        "Write mode", if_exists_options, horizontal=True,
+        index=if_exists_options.index(config.get("if_exists", "replace")),
+        format_func=lambda v: "Replace (truncate then load)" if v == "replace" else "Append",
+    )
+
+    new_config = {
+        "driver": driver, "server": server, "database": database, "auth": auth,
+        "username": username, "table": table, "if_exists": if_exists,
+        "chunksize": config.get("chunksize", 1000),
+    }
+
+    b1, b2 = st.columns(2)
+    if b1.button("Save connection settings"):
+        errors = validate_sql_config(new_config)
+        for e in errors:
+            st.error(e)
+        if not errors:
+            save_sql_config(new_config)
+            st.success("Saved (any password entered above was not written to disk).")
+
+    if b2.button("Run import", type="primary"):
+        errors = validate_sql_config(new_config)
+        for e in errors:
+            st.error(e)
+        if not errors:
+            try:
+                with st.spinner("Importing..."):
+                    result = import_xlsx_to_sql(Path(xlsx_path), new_config, password)
+                    checks = verify_import(result)
+            except Exception as e:
+                st.error(f"Import failed: {e}")
+            else:
+                st.success(f"Loaded {result['source_rows']} row(s) into {result['table']}.")
+                st.code("\n".join(checks), language=None)
+
+
+# ---------------------------------------------------------------------------
+# Schedule SQL Import page: configure a recurring, unattended sql_import.py
+# run via Windows Task Scheduler (see sql_scheduler.py). Mirrors the Schedule
+# page's pattern for pipeline.py — a separate config/task, so registering or
+# deleting this schedule never touches the pipeline's own schedule.
+# ---------------------------------------------------------------------------
+
+def render_sql_schedule_page() -> None:
+    st.header("Schedule SQL Import")
+    st.caption(
+        "Configure a recurring, unattended sql_import.py run via Windows Task "
+        "Scheduler. Scheduled runs require Windows Authentication — a SQL auth "
+        "password can't be embedded in a Task Scheduler command line safely "
+        "(see sql_scheduler.py's docstring)."
+    )
+
+    config = load_sql_schedule_config()
+
+    recurrence = st.radio(
+        "Run", RECURRENCE_CHOICES, horizontal=True,
+        index=RECURRENCE_CHOICES.index(config["recurrence"]),
+        key="sqlsched_recurrence",
+    )
+
+    d1, d2 = st.columns(2)
+    start_date = d1.date_input(
+        "Start date", value=datetime.fromisoformat(config["start_date"]).date(), key="sqlsched_start",
+    )
+    has_end = d2.checkbox(
+        "Set an end date for the auto-run", value=config.get("end_date") is not None, key="sqlsched_has_end",
+    )
+    end_date = None
+    if has_end:
+        default_end = (datetime.fromisoformat(config["end_date"]).date()
+                        if config.get("end_date") else start_date)
+        end_date = st.date_input(
+            "End date (schedule stops firing after this date)",
+            value=max(default_end, start_date), min_value=start_date, key="sqlsched_end",
+        )
+
+    interval = 1
+    weekdays = config["weekdays"]
+    day_of_month = config["day_of_month"]
+    month = config["month"]
+
+    if recurrence == "Daily":
+        interval = st.number_input(
+            "Every N day(s)", min_value=1, step=1,
+            value=int(config.get("interval", 1)) if config["recurrence"] == "Daily" else 1,
+            key="sqlsched_interval_daily",
+        )
+    elif recurrence == "Weekly":
+        c1, c2 = st.columns(2)
+        interval = c1.number_input(
+            "Every N week(s)", min_value=1, step=1,
+            value=int(config.get("interval", 1)) if config["recurrence"] == "Weekly" else 1,
+            key="sqlsched_interval_weekly",
+        )
+        weekdays = c2.multiselect("On", WEEKDAYS, default=weekdays or ["Monday"], key="sqlsched_weekdays")
+    elif recurrence == "Monthly":
+        day_of_month = st.number_input(
+            "Day of month", min_value=1, max_value=31,
+            value=int(day_of_month), step=1, key="sqlsched_dom_monthly",
+        )
+    else:  # Annually
+        c1, c2 = st.columns(2)
+        month = c1.selectbox("Month", MONTHS, index=MONTHS.index(month), key="sqlsched_month")
+        day_of_month = c2.number_input(
+            "Day", min_value=1, max_value=31,
+            value=int(day_of_month), step=1, key="sqlsched_dom_annual",
+        )
+
+    run_time = st.time_input(
+        "Time of day", value=datetime.strptime(config["time"], "%H:%M").time(), key="sqlsched_time",
+    )
+
+    st.divider()
+    p1, p2 = st.columns(2)
+    with p1:
+        xlsx_path = path_picker(
+            "sqlsched_xlsx", config["xlsx_path"], mode="file",
+            file_extensions=(".xlsx",), label="Input .xlsx file",
+        )
+    with p2:
+        sql_config_path = path_picker(
+            "sqlsched_sqlconfig", config["sql_config_path"], mode="file",
+            file_extensions=(".json",), label="SQL connection config",
+        )
+    st.caption(
+        "Paths are resolved on whichever machine runs the schedule — Browse walks that "
+        "machine's own filesystem. Set up the connection config on the Import to SQL "
+        "Server page first."
+    )
+
+    if st.button("Save schedule", type="primary", key="sqlsched_save"):
+        new_config = {
+            "recurrence": recurrence,
+            "interval": int(interval),
+            "weekdays": weekdays,
+            "day_of_month": int(day_of_month),
+            "month": month,
+            "time": run_time.strftime("%H:%M"),
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat() if end_date else None,
+            "xlsx_path": xlsx_path,
+            "sql_config_path": sql_config_path,
+        }
+        errors = validate_sql_schedule_config(new_config)
+        for e in errors:
+            st.error(e)
+        if not errors:
+            save_sql_schedule_config(new_config)
+            bat_path = write_sql_register_bat(new_config)
+            st.success(f"Saved. Registration script refreshed at {bat_path.name}.")
+            st.rerun()
+
+    if not SQL_SCHEDULE_CONFIG_PATH.exists():
+        st.info("No SQL import schedule saved yet.")
+        return
+
+    config = load_sql_schedule_config()
+    st.divider()
+    st.subheader("Current schedule")
+    st.write(summarize_sql_schedule(config))
+    st.caption(f"Input: `{config['xlsx_path']}`  →  SQL config: `{config['sql_config_path']}`")
+
+    st.subheader("Activate it")
+    st.caption(
+        f"Run **{REGISTER_SQL_BAT_PATH.name}** as Administrator on the Windows machine "
+        "that should host this schedule — same manual-approval step as the other "
+        "register_*.bat scripts. Re-running it after editing the schedule above "
+        "overwrites the existing task (`/F`)."
+    )
+    try:
+        st.code(format_sql_schtasks_command(config), language="bat")
+    except ValueError as e:
+        st.error(str(e))
+
+    if REGISTER_SQL_BAT_PATH.exists():
+        st.download_button(
+            f"Download {REGISTER_SQL_BAT_PATH.name}",
+            REGISTER_SQL_BAT_PATH.read_bytes(),
+            file_name=REGISTER_SQL_BAT_PATH.name,
+            mime="text/plain",
+        )
+
+    st.caption("Once registered, manage the task directly with schtasks:")
+    st.code(
+        f'schtasks /Query  /TN "{SQL_TASK_NAME}" /FO LIST /V\n'
+        f'schtasks /Run    /TN "{SQL_TASK_NAME}"\n'
+        f'schtasks /Delete /TN "{SQL_TASK_NAME}" /F',
+        language="bat",
+    )
+
+    if st.button("Delete saved schedule", key="sqlsched_delete"):
+        delete_sql_schedule_config()
+        st.success("Schedule config deleted. This does not remove an already-registered "
+                    "Windows task — use schtasks /Delete, shown above, for that.")
+        st.rerun()
+
+
+# ---------------------------------------------------------------------------
 # Page renderers
 # ---------------------------------------------------------------------------
 
@@ -645,6 +911,10 @@ def main() -> None:
         render_single_step_page(page, info["file"], info["has_default"])
     elif info["kind"] == "product":
         render_product_page()
+    elif info["kind"] == "sql_import":
+        render_sql_import_page()
+    elif info["kind"] == "sql_schedule":
+        render_sql_schedule_page()
     else:
         render_config_page()
 
