@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Two independent pipelines in one repo, sharing nothing but Python + this checkout:
 
 1. **KEDP ingest/compile** (`consumer.py`, `compiler.py`, `utils.py`) — Kafka JSON messages -> daily `Compiled_Report_YYYY-MM-DD.xlsx`. Documented in `README.md`.
-2. **Transform stage + Streamlit app** (`pipeline.py`, `rules_engine.py`, `rule_importer.py`, `app.py`, `scheduler.py`, `path_picker.py`) — takes a raw export (originally a manual, undocumented Qlik process) and derives 10 business columns via a first-match-wins rule engine, splits active/void, and produces 4 report-ready workbooks. Has a Streamlit UI for editing the rules, running the transform, and scheduling unattended runs via Windows Task Scheduler.
+2. **Transform stage + Streamlit app** (`pipeline.py`, `rules_engine.py`, `rule_importer.py`, `app.py`, `scheduler.py`, `path_picker.py`) — takes a raw export (originally a manual, undocumented Qlik process) and derives 10 business columns via a first-match-wins rule engine, splits active/void, and produces 4 report-ready workbooks. Has a Streamlit UI for editing the rules, running the transform, and scheduling unattended runs via Windows Task Scheduler. Optionally loads any of the 4 output workbooks straight into a SQL Server table (`sql_import.py`, `sql_scheduler.py`) — its own step, menu, and schedule, independent of the xlsx outputs.
 
 **`spec.txt` is the current, authoritative spec for the transform stage + app.** `prd.txt` (original PRD) and `process.txt` (log of one reference run) predate the rule-editor GUI and the Schedule feature — treat them as historical design notes where they disagree with `spec.txt`.
 
@@ -19,9 +19,10 @@ Two independent pipelines in one repo, sharing nothing but Python + this checkou
 | Data transform | pandas |
 | Excel I/O | openpyxl (`.xlsx`), xlrd (`.xls`) |
 | Kafka consumer | `confluent-kafka` |
+| SQL Server import | `sqlalchemy` + `pyodbc` (`sql_import.py`) |
 | Scheduling | Windows Task Scheduler (`schtasks`), via a generated `.bat` |
 
-No database layer exists in this repo (no MSSQL/SQLAlchemy) — outputs are always `.xlsx` files.
+Outputs are always `.xlsx` files first; SQL Server is an optional downstream load of an already-written output workbook, not a datastore the pipeline reads from.
 
 ## Setup
 
@@ -46,16 +47,26 @@ python compiler.py                             # KEDP: JSON files -> daily compi
 consumer.py / compiler.py / utils.py   KEDP ingest + compile (see README.md)
 
 pipeline.py                            Transform stage: 8-step derivation + CLI entry point,
-                                        write_excel_overwrite() (force-overwrite on every write)
+                                        write_excel_overwrite() (force-overwrite on every write),
+                                        verify_outputs() (Step 9) + sanitize_commas() (Step 10)
 rules_engine.py                        Shared rule model (canonical DNF) + evaluator
 rule_importer.py                       One-time parser: dataFilter/*.txt -> rules/*.json
                                         (re-running it overwrites rules/*.json, discarding
                                         any edits made through the app — see its docstring)
 app.py                                 Streamlit UI: one rule-editor page per derived step,
-                                        Run Pipeline, Schedule, Config
-scheduler.py                           Schedule config I/O + schtasks/.bat generation
+                                        Run Pipeline, Schedule, Config, Import to SQL Server,
+                                        Schedule SQL Import
+scheduler.py                           Schedule config I/O + schtasks/.bat generation for
+                                        recurring pipeline.py runs
 path_picker.py                         Cross-platform (macOS/Windows) file/folder browser
-                                        widget used by the Schedule page
+                                        widget used by the Schedule and SQL pages
+sql_import.py                          Loads an output workbook into a SQL Server table
+                                        (TRUNCATE+load or append) + CLI entry point; auto-caps
+                                        pandas.to_sql's chunksize so wide tables (77-133 cols)
+                                        stay under SQL Server's ~2100-param-per-statement limit
+sql_scheduler.py                       Schedule config I/O + schtasks/.bat generation for
+                                        recurring sql_import.py runs — mirrors scheduler.py,
+                                        imports its shared constants rather than duplicating them
 build_mgmt_report.py                   One-off script: adds mgmtRpt to an existing output_all.xlsx
 
 dataFilter/*.txt                       Original Qlik-style rule scripts (nested If()/LOAD-WHERE) —
@@ -63,6 +74,10 @@ dataFilter/*.txt                       Original Qlik-style rule scripts (nested 
 rules/*.json                           Canonical rule storage pipeline.py actually reads at run
                                         time; editable live via app.py's rule-editor pages
 rawData/, output/                      Sample input / generated output — gitignored
+sql_config.json, sql_schedule_config.json,
+register_scheduled_sql_import_task.bat SQL connection settings + SQL import schedule config +
+                                        generated task-registration script — all gitignored;
+                                        the password itself is never written to any of them
 ```
 
 `app.py` never imports pandas directly — it only calls `pipeline.py` and hands DataFrames to Streamlit (`st.dataframe`, `st.download_button`).
@@ -73,7 +88,18 @@ Which `businessUnit`/`productNew`/`Channels`/`Market`/`reportDate`/`mgmtRpt` a r
 
 ## Output files
 
-`output.xlsx` / `output_active.xlsx` / `output_void.xlsx` / `output_all.xlsx` — see `spec.txt` sections 3 and 5 for the full 8-step derivation and reference row/column counts. Every write goes through `pipeline.write_excel_overwrite()`: an existing file at the target path is deleted before writing, so a re-run always fully replaces stale output — never merges, never silently fails on a locked-open file.
+`output.xlsx` / `output_active.xlsx` / `output_void.xlsx` / `output_all.xlsx` — see `spec.txt` sections 3 and 5 for the full 8-step derivation and reference row/column counts. Every write goes through `pipeline.write_excel_overwrite()`: an existing file at the target path is deleted before writing, so a re-run always fully replaces stale output — never merges, never silently fails on a locked-open file. Step 9 (`verify_outputs()`) sanity-checks row/column counts, per-column nulls, and active/void/all consistency, writing `verification_report.txt` alongside the 4 workbooks. Step 10 (`sanitize_commas()`) replaces `,` with ` ` in every text cell of all 4 workbooks.
+
+Any of the 4 output workbooks can optionally be loaded into a SQL Server table afterward — see "SQL Server import" below.
+
+## SQL Server import
+
+`sql_import.py` loads one output `.xlsx` into a `schema.table` in SQL Server, in `replace` mode (`TRUNCATE TABLE` then insert — preserves the table's existing indexes/constraints, unlike pandas' destructive drop-and-recreate) or `append` mode. CLI: `python sql_import.py output/output_all.xlsx`. Streamlit: the "Import to SQL Server" page.
+
+- **Connection settings** live in `sql_config.json` (gitignored) — server, database, driver, auth mode, table, write mode. The password is never written to it.
+- **Password**: typed into the Streamlit form (used only for that run), or read from the `MSSQL_PASSWORD` environment variable — the Streamlit page falls back to it automatically whenever the Password field is left blank, and the CLI/scheduled path always reads it via `read_password()`.
+- **Table name** is validated against a strict `schema.table` / `[schema].[table]` pattern (`validate_table_name()`) before being interpolated into any SQL statement.
+- **Wide tables**: `pandas.to_sql(method="multi")` packs `chunksize` rows into one `INSERT`, so a naive `chunksize=1000` on a 77-133 column output workbook would produce 77,000+ bound parameters — SQL Server's hard limit is ~2100 per statement. `_safe_chunksize()` auto-caps the batch size to whatever fits the table's actual column count, so this can't silently insert 0 rows (the failure mode before this existed: the table's DDL commits fine, then the first batch insert is rejected, so it *looks* like "table created, but no data imported" rather than a clear error).
 
 ## Kafka specifics (KEDP ingest only — unrelated to the transform stage)
 
@@ -84,6 +110,8 @@ Which `businessUnit`/`productNew`/`Channels`/`Market`/`reportDate`/`mgmtRpt` a r
 ## Scheduling
 
 The Schedule page in `app.py` configures a recurring `pipeline.py` run (daily/weekly/monthly/annually, with a start date and an optional end date) and generates `register_scheduled_pipeline_task.bat` — same `schtasks`-based pattern as `register_compiler_task.bat`/`register_consumer_task.bat`. Streamlit has no background job runner, so activating the schedule still requires manually running that `.bat` as Administrator on the Windows host.
+
+The Schedule SQL Import page is the same pattern for `sql_import.py` (task name `KEDP_ScheduledSQLImport`, generates `register_scheduled_sql_import_task.bat`) — a separate config/task from the pipeline's own schedule, so registering or deleting one never touches the other. It refuses to save a schedule that uses SQL Authentication, since a password can't be embedded in a Task Scheduler command line safely: scheduled SQL imports require Windows Authentication, or `MSSQL_PASSWORD` set as a *system* environment variable (`setx MSSQL_PASSWORD ... /M`, as Administrator).
 
 ## Open questions
 
