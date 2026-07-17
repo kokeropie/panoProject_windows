@@ -9,10 +9,15 @@ report_fetch_scheduler.py for the recurring-run half.
 
 Auth is HTTP Basic (ck as username, cs as password) - not documented
 anywhere, found by probing the live APIs. Config (report_fetch_config.json,
-gitignored) holds each source's ck, but never cs: cs is supplied at run
-time, either via a per-source environment variable (CLI / scheduled runs,
-named "<SOURCE>_CS", e.g. KATRINA_CS) or typed into the Streamlit form
-(interactive runs) - mirrors sql_import.py's MSSQL_PASSWORD pattern.
+gitignored) holds each source's ck. cs is resolved at run time, in order:
+an explicit value (typed into the Streamlit form for that run) > a
+per-source environment variable ("<SOURCE>_CS", e.g. KATRINA_CS) > a line
+in report_fetch_secrets.txt (gitignored, "<SOURCE>_CS=value" per line,
+same names as the env vars) - see load_cs_secrets_file(). The secrets file
+exists for CLI/scheduled-run convenience so cs doesn't have to be typed
+every run or set as a system env var; it is plaintext on disk, so treat it
+like any other local secrets file (don't widen its permissions, don't
+commit it - already gitignored).
 
 cobt.id (no "www") 301-redirects to www.cobt.id and the redirect drops the
 Authorization header, so cobt_mt's base_url below points straight at
@@ -21,6 +26,7 @@ www.cobt.id to avoid that hop entirely.
 Usage (CLI):
     python report_fetch.py --outdir rawData/katrina_daily_reports
     python report_fetch.py --date 2026-07-13 --source katrina --outdir DIR
+    python report_fetch.py --secrets report_fetch_secrets.txt --outdir DIR
 """
 from __future__ import annotations
 
@@ -42,6 +48,7 @@ import certifi
 
 PROJECT_DIR = Path(__file__).parent
 REPORT_FETCH_CONFIG_PATH = PROJECT_DIR / "report_fetch_config.json"
+REPORT_FETCH_SECRETS_PATH = PROJECT_DIR / "report_fetch_secrets.txt"
 
 # Explicit CA bundle rather than trusting the OS/venv Python to have one
 # wired up correctly - python.org macOS builds need "Install Certificates
@@ -70,7 +77,9 @@ class ReportFetchError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Config I/O - ck only, cs is never persisted (see module docstring)
+# Config I/O - ck lives in report_fetch_config.json; cs lives in either the
+# environment or report_fetch_secrets.txt (see module docstring for the
+# resolution order)
 # ---------------------------------------------------------------------------
 
 def default_report_fetch_config() -> dict:
@@ -93,10 +102,41 @@ def cs_env_var(source_key: str) -> str:
     return f"{source_key.upper()}_CS"
 
 
-def read_cs(source_key: str, cli_value: str | None = None) -> str | None:
+def load_cs_secrets_file(path: Path = REPORT_FETCH_SECRETS_PATH) -> dict[str, str]:
+    """Parses a simple '<SOURCE>_CS=value' per line file (blank lines and
+    '#' comments ignored) into {env-var-name: value}."""
+    if not path.exists():
+        return {}
+    secrets = {}
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        secrets[key.strip()] = value.strip()
+    return secrets
+
+
+def save_cs_secrets(cs_values: dict[str, str], path: Path = REPORT_FETCH_SECRETS_PATH) -> None:
+    """Writes '<SOURCE>_CS=value' lines for every non-empty value given -
+    plaintext secrets on disk, so the file is chmod'd owner-only (best
+    effort; a no-op on filesystems that don't support POSIX permissions)."""
+    lines = [f"{cs_env_var(key)}={value}" for key, value in cs_values.items() if value]
+    path.write_text("\n".join(lines) + ("\n" if lines else ""))
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
+def read_cs(source_key: str, cli_value: str | None = None,
+            secrets_path: Path = REPORT_FETCH_SECRETS_PATH) -> str | None:
     if cli_value:
         return cli_value
-    return os.environ.get(cs_env_var(source_key))
+    env_value = os.environ.get(cs_env_var(source_key))
+    if env_value:
+        return env_value
+    return load_cs_secrets_file(secrets_path).get(cs_env_var(source_key))
 
 
 def validate_report_fetch_scope(config: dict, sources: list[str], cs_values: dict[str, str | None]) -> list[str]:
@@ -111,8 +151,9 @@ def validate_report_fetch_scope(config: dict, sources: list[str], cs_values: dic
             errors.append(f"{SOURCES[key]['label']}: ck is not set (Fetch Daily Reports page, or "
                            f"report_fetch_config.json).")
         if not cs_values.get(key):
-            errors.append(f"{SOURCES[key]['label']}: cs is not set (type it in, or set the "
-                           f"{cs_env_var(key)} environment variable).")
+            errors.append(f"{SOURCES[key]['label']}: cs is not set (type it in, set the "
+                           f"{cs_env_var(key)} environment variable, or add it to "
+                           f"{REPORT_FETCH_SECRETS_PATH.name}).")
     return errors
 
 
@@ -246,6 +287,8 @@ def main() -> None:
     parser.add_argument("--outdir", type=Path, default=PROJECT_DIR / "rawData" / "katrina_daily_reports",
                          help="Folder to save extracted CSVs into")
     parser.add_argument("--config", type=Path, default=REPORT_FETCH_CONFIG_PATH)
+    parser.add_argument("--secrets", type=Path, default=REPORT_FETCH_SECRETS_PATH,
+                         help="cs fallback file (env vars still take priority over this)")
     parser.add_argument("--source", action="append", choices=list(SOURCES.keys()),
                          help="Limit to this source (repeatable). Default: all.")
     parser.add_argument("--product", action="append", choices=["flight", "train", "hotel"],
@@ -257,7 +300,7 @@ def main() -> None:
     date_str = args.date or (date.today() - timedelta(days=args.days_ago)).isoformat()
     config = {**default_report_fetch_config(), **json.loads(args.config.read_text())} if args.config.exists() else default_report_fetch_config()
     sources = args.source or list(SOURCES.keys())
-    cs_values = {key: read_cs(key) for key in sources}
+    cs_values = {key: read_cs(key, secrets_path=args.secrets) for key in sources}
 
     errors = validate_report_fetch_scope(config, sources, cs_values)
     if errors:

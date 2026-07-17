@@ -41,11 +41,13 @@ from pipeline import (
     write_verification_report,
 )
 from report_fetch import (
+    REPORT_FETCH_SECRETS_PATH,
     SOURCES,
     cs_env_var,
     fetch_all,
     load_report_fetch_config,
     read_cs,
+    save_cs_secrets,
     save_report_fetch_config,
     summarize_results,
     validate_report_fetch_scope,
@@ -840,27 +842,45 @@ def render_report_fetch_page() -> None:
     st.caption(
         "Pulls daily transaction reports from KATRINA, COBT MT PROD, and COBT DANAMON PROD "
         "(flight/train/hotel each) and extracts the CSVs into a folder. Auth is HTTP Basic "
-        "(ck/cs) - ck saves to report_fetch_config.json, cs never does; see report_fetch.py."
+        "(ck/cs) - ck saves to report_fetch_config.json; cs can be typed per run, read from a "
+        "per-source env var, or saved to report_fetch_secrets.txt below - see report_fetch.py."
     )
 
     config = load_report_fetch_config()
     st.subheader("Credentials")
     cs_values: dict[str, str | None] = {}
+    cs_inputs: dict[str, str] = {}
     for key, source in SOURCES.items():
         c1, c2 = st.columns(2)
         config[key] = c1.text_input(f"{source['label']} ck", value=config.get(key, ""), key=f"fetch_ck_{key}")
         cs_input = c2.text_input(
             f"{source['label']} cs", type="password", key=f"fetch_cs_{key}",
-            help=f"Leave blank to use the {cs_env_var(key)} environment variable instead. "
-                 "Used only for this run, never written to disk.",
+            help=f"Leave blank to fall back to the {cs_env_var(key)} environment variable, then "
+                 "to report_fetch_secrets.txt. Typing a value here is used only for this run.",
         )
+        cs_inputs[key] = cs_input
         cs_values[key] = read_cs(key, cs_input)
-        if not cs_input and not os.environ.get(cs_env_var(key)):
-            c2.caption(f"cs is blank and {cs_env_var(key)} isn't set - this source will fail.")
+        if not cs_values[key]:
+            c2.caption(f"cs is blank, {cs_env_var(key)} isn't set, and it's not in "
+                       f"report_fetch_secrets.txt - this source will fail.")
 
-    if st.button("Save ck values"):
+    b1, b2 = st.columns(2)
+    if b1.button("Save ck values"):
         save_report_fetch_config(config)
-        st.success("Saved (cs was not written to disk).")
+        st.success("Saved ck (cs was not written to disk).")
+    if b2.button("Save cs to report_fetch_secrets.txt"):
+        to_save = {k: v for k, v in cs_inputs.items() if v}
+        if not to_save:
+            st.warning("No cs values typed above - nothing to save.")
+        else:
+            save_cs_secrets(to_save)
+            st.success(f"Saved {len(to_save)} cs value(s) to {REPORT_FETCH_SECRETS_PATH.name} "
+                       "(plaintext on disk, gitignored - CLI/scheduled runs will read it "
+                       "automatically from now on).")
+    st.caption(
+        "report_fetch_secrets.txt is a convenience for unattended runs - it stores cs in "
+        "plaintext, so treat it like any other local secrets file."
+    )
 
     st.divider()
     st.subheader("What to fetch")

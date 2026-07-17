@@ -14,10 +14,12 @@ Administrator, same as the other register_*.bat scripts in this repo.
 Security note: schtasks command lines are visible to any local user via
 `schtasks /Query /TN ... /FO LIST /V` and in the Task Scheduler UI, so a cs
 (API secret) must never be embedded in one - see report_fetch.py's docstring.
-Unattended/scheduled fetches read each source's cs from a per-source system
-environment variable (setx <SOURCE>_CS ... /M, as Administrator) that must
-already be set on the machine before the task fires; this module has no way
-to verify that from here, so it only warns, it does not block registration.
+Unattended/scheduled fetches instead read each source's cs from either a
+per-source system environment variable (setx <SOURCE>_CS ... /M, as
+Administrator) or report_fetch_secrets.txt (saved from the Fetch Daily
+Reports page) - one of the two must be in place on the machine before the
+task fires; this module has no way to verify that from here, so it only
+warns, it does not block registration.
 
 Usage:
     from report_fetch_scheduler import load_fetch_schedule_config, \
@@ -35,6 +37,7 @@ from report_fetch import (
     REPORT_FETCH_CONFIG_PATH,
     cs_env_var,
     load_report_fetch_config,
+    read_cs,
 )
 from scheduler import (
     MONTHS,
@@ -125,15 +128,19 @@ def validate_fetch_schedule_config(config: dict) -> list[str]:
 
 
 def fetch_schedule_warnings(config: dict) -> list[str]:
-    """Non-blocking cautions, shown separately from hard validation errors."""
+    """Non-blocking cautions, shown separately from hard validation errors.
+    Best-effort only: checks whether *this* process (the one running the
+    Streamlit form) can resolve each source's cs, which may not be the
+    machine that actually runs the scheduled task."""
     warnings = []
     for key in config.get("sources") or []:
-        if key in SOURCES:
+        if key in SOURCES and not read_cs(key):
             warnings.append(
-                f"{SOURCES[key]['label']} needs its cs set as a SYSTEM environment variable "
-                f"named {cs_env_var(key)} on the machine that runs this schedule "
-                f"(setx {cs_env_var(key)} ... /M, as Administrator) - it can't be embedded "
-                f"in the scheduled task."
+                f"{SOURCES[key]['label']}: cs isn't resolvable here - before this schedule "
+                f"fires, either save it to report_fetch_secrets.txt on the Fetch Daily "
+                f"Reports page, or set {cs_env_var(key)} as a SYSTEM environment variable "
+                f"(setx {cs_env_var(key)} ... /M, as Administrator) on the machine that runs "
+                f"the schedule. Neither can be embedded in the scheduled task itself."
             )
     return warnings
 

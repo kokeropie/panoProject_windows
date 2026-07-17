@@ -87,10 +87,10 @@ register_scheduled_sql_import_task.bat SQL connection settings + SQL import sche
                                         the password itself is never written to any of them
 report_fetch_config.json,
 report_fetch_schedule_config.json,
-register_scheduled_report_fetch_task.bat
-                                        Per-source ck values + fetch schedule config + generated
-                                        task-registration script — all gitignored; cs is never
-                                        written to any of them
+register_scheduled_report_fetch_task.bat,
+report_fetch_secrets.txt               Per-source ck values + fetch schedule config + generated
+                                        task-registration script + optional cs fallback file —
+                                        all gitignored
 ```
 
 `app.py` never imports pandas directly — it only calls `pipeline.py` and hands DataFrames to Streamlit (`st.dataframe`, `st.download_button`).
@@ -123,7 +123,7 @@ Any of the 4 output workbooks can optionally be loaded into a SQL Server table a
 `report_fetch.py` pulls the "daily transaction report" for a given date from three external partner APIs — KATRINA, COBT MT PROD, COBT DANAMON PROD — each exposing `flight`/`train`/`hotel` endpoints that return a zip of CSV(s). CLI: `python report_fetch.py --outdir rawData/katrina_daily_reports`. Streamlit: the "Fetch Daily Reports" page. Unrelated to the KEDP Kafka pipeline or the transform stage — it only writes CSVs into a folder, nothing reads them automatically.
 
 - **Auth** is HTTP Basic (`ck` as username, `cs` as password) — undocumented by the partners, found by probing the live APIs. Requests also need a browser-like `User-Agent`; Cloudflare (fronting all three) 403s urllib's default one outright.
-- **Config** (`report_fetch_config.json`, gitignored) holds each source's `ck` only. `cs` is never persisted to disk — supplied per-run either by typing it into the Streamlit form, or via a per-source environment variable (`KATRINA_CS` / `COBT_MT_CS` / `COBT_DANAMON_CS`) for the CLI/scheduled path, mirroring `sql_import.py`'s `MSSQL_PASSWORD` pattern.
+- **Config** (`report_fetch_config.json`, gitignored) holds each source's `ck` only. `cs` is resolved at run time in order: typed into the Streamlit form for that run > a per-source environment variable (`KATRINA_CS` / `COBT_MT_CS` / `COBT_DANAMON_CS`) > a line in `report_fetch_secrets.txt` (gitignored, `<SOURCE>_CS=value` per line, saved from the "Save cs to report_fetch_secrets.txt" button on the Fetch Daily Reports page). The secrets file is a plaintext-on-disk convenience for CLI/scheduled runs so `cs` doesn't have to be retyped or set as a system env var every time — mirrors `sql_import.py`'s `MSSQL_PASSWORD` pattern but with a file-based option added since there's no SQL-auth-style "just use a different mode" escape hatch here.
 - **Dates** are computed at run time via `--days-ago N` (default 1 = yesterday), not passed as a fixed date, so a recurring schedule always fetches the right day without editing the command.
 - **`cobt.id` (no "www")** 301-redirects to `www.cobt.id` and the redirect drops the `Authorization` header, so `cobt_mt`'s base URL points straight at `www.cobt.id` to skip that hop.
 - Each of the 9 source/product endpoints is fetched independently — one failing (bad creds, network blip) doesn't abort the rest of the batch; `fetch_all()` returns a per-endpoint status list instead of raising.
@@ -141,7 +141,7 @@ The Schedule page in `app.py` configures a recurring `pipeline.py` run (daily/we
 
 The Schedule SQL Import page is the same pattern for `sql_import.py` (task name `KEDP_ScheduledSQLImport`, generates `register_scheduled_sql_import_task.bat`) — a separate config/task from the pipeline's own schedule, so registering or deleting one never touches the other. It refuses to save a schedule that uses SQL Authentication, since a password can't be embedded in a Task Scheduler command line safely: scheduled SQL imports require Windows Authentication, or `MSSQL_PASSWORD` set as a *system* environment variable (`setx MSSQL_PASSWORD ... /M`, as Administrator).
 
-The Schedule Daily Reports page is the same pattern for `report_fetch.py` (task name `KEDP_ScheduledReportFetch`, generates `register_scheduled_report_fetch_task.bat`) — again a separate config/task. Unlike the SQL page it doesn't refuse to save when `cs` env vars aren't set (there's no alternative auth mode to fall back to), it only warns: each selected source's `cs` must be set as a *system* environment variable (`setx <SOURCE>_CS ... /M`, as Administrator) before the task fires, since it can't be embedded in the command line either.
+The Schedule Daily Reports page is the same pattern for `report_fetch.py` (task name `KEDP_ScheduledReportFetch`, generates `register_scheduled_report_fetch_task.bat`) — again a separate config/task. Unlike the SQL page it doesn't refuse to save when a source's `cs` isn't resolvable, it only warns: before the task fires, each selected source's `cs` needs to be either saved to `report_fetch_secrets.txt` (Fetch Daily Reports page) or set as a *system* environment variable (`setx <SOURCE>_CS ... /M`, as Administrator) on the machine that runs the schedule, since it can't be embedded in the command line either way.
 
 ## Open questions
 
