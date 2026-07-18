@@ -33,6 +33,8 @@ from datetime import date
 from pathlib import Path
 
 from report_fetch import (
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_RETRY_DELAY_SECONDS,
     SOURCES,
     REPORT_FETCH_CONFIG_PATH,
     cs_env_var,
@@ -78,6 +80,8 @@ def default_fetch_schedule_config() -> dict:
         "report_fetch_config_path": str(REPORT_FETCH_CONFIG_PATH.name),
         "sources": list(ALL_SOURCES),
         "products": list(ALL_PRODUCTS),
+        "max_retries": DEFAULT_MAX_RETRIES,
+        "retry_delay": DEFAULT_RETRY_DELAY_SECONDS,
     }
 
 
@@ -107,6 +111,10 @@ def validate_fetch_schedule_config(config: dict) -> list[str]:
         errors.append("An output folder is required.")
     if config.get("days_ago", 0) < 0:
         errors.append("Days ago must be 0 or more.")
+    if config.get("max_retries", 0) < 0:
+        errors.append("Max retries must be 0 or more.")
+    if config.get("retry_delay", 1) < 1:
+        errors.append("Retry delay must be at least 1 second.")
     sources = config.get("sources") or []
     if not sources:
         errors.append("Pick at least one source to fetch.")
@@ -156,7 +164,9 @@ def _fetch_schtasks_flag_lines(config: dict, python_exe: str, report_fetch_scrip
     tr_value = (f'"\\"{python_exe}\\" \\"{report_fetch_script}\\" '
                 f'\\"--days-ago\\" \\"{config["days_ago"]}\\" '
                 f'\\"--outdir\\" \\"{config["outdir"]}\\" '
-                f'\\"--config\\" \\"{config["report_fetch_config_path"]}\\"{extra}"')
+                f'\\"--config\\" \\"{config["report_fetch_config_path"]}\\" '
+                f'\\"--max-retries\\" \\"{config.get("max_retries", DEFAULT_MAX_RETRIES)}\\" '
+                f'\\"--retry-delay\\" \\"{config.get("retry_delay", DEFAULT_RETRY_DELAY_SECONDS)}\\"{extra}"')
 
     lines = [f'/TN "{task_name}"', f"/TR {tr_value}"]
     lines += _recurrence_flag_lines(config)
@@ -293,6 +303,7 @@ echo      Python  : %PYTHON%
 echo      Outdir  : {config['outdir']}
 echo      Sources : {", ".join(config['sources'])}
 echo      Products: {", ".join(config['products'])}
+echo      Retries : {config.get('max_retries', DEFAULT_MAX_RETRIES)} (every {config.get('retry_delay', DEFAULT_RETRY_DELAY_SECONDS)}s)
 echo.
 echo Useful commands:
 echo   Query  : schtasks /Query /TN "%TASK_NAME%" /FO LIST /V

@@ -41,10 +41,12 @@ from pipeline import (
     write_verification_report,
 )
 from report_fetch import (
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_RETRY_DELAY_SECONDS,
     REPORT_FETCH_SECRETS_PATH,
     SOURCES,
     cs_env_var,
-    fetch_all,
+    fetch_all_until_complete,
     load_report_fetch_config,
     read_cs,
     save_cs_secrets,
@@ -895,14 +897,26 @@ def render_report_fetch_page() -> None:
 
     outdir = path_picker("fetch_outdir", "rawData/katrina_daily_reports", mode="dir", label="Output folder")
 
+    r1, r2 = st.columns(2)
+    max_retries = r1.number_input(
+        "Max retries", min_value=0, step=1, value=DEFAULT_MAX_RETRIES, key="fetch_max_retries",
+        help="If an endpoint still fails after fetching, retry just that endpoint this many "
+             "more times before giving up. 0 disables retrying.",
+    )
+    retry_delay = r2.number_input(
+        "Retry delay (seconds)", min_value=1, step=1, value=DEFAULT_RETRY_DELAY_SECONDS,
+        key="fetch_retry_delay", help="Wait this long between retry passes.",
+    )
+
     if st.button("Run fetch now", type="primary"):
         errors = validate_report_fetch_scope(config, sources, cs_values)
         for e in errors:
             st.error(e)
         if not errors:
-            with st.spinner("Fetching..."):
-                results = fetch_all(report_date, Path(outdir), config, cs_values,
-                                     sources=sources, products=products)
+            with st.spinner("Fetching (auto-retrying failed endpoints until done)..."):
+                results = fetch_all_until_complete(report_date, Path(outdir), config, cs_values,
+                                                    sources=sources, products=products,
+                                                    max_retries=int(max_retries), retry_delay=int(retry_delay))
             ok = sum(1 for r in results if r["status"] == "ok")
             if ok == len(results):
                 st.success(f"{ok}/{len(results)} endpoint(s) OK. Saved to {outdir}/")
@@ -996,6 +1010,19 @@ def render_report_fetch_schedule_page() -> None:
     products = st.multiselect("Products", FETCH_ALL_PRODUCTS, default=config.get("products", FETCH_ALL_PRODUCTS),
                                key="fetchsched_products")
 
+    r1, r2 = st.columns(2)
+    max_retries = r1.number_input(
+        "Max retries", min_value=0, step=1, value=int(config.get("max_retries", DEFAULT_MAX_RETRIES)),
+        key="fetchsched_max_retries",
+        help="If an endpoint still fails after fetching, retry just that endpoint this many "
+             "more times before giving up. 0 disables retrying.",
+    )
+    retry_delay = r2.number_input(
+        "Retry delay (seconds)", min_value=1, step=1,
+        value=int(config.get("retry_delay", DEFAULT_RETRY_DELAY_SECONDS)),
+        key="fetchsched_retry_delay", help="Wait this long between retry passes.",
+    )
+
     p1, p2 = st.columns(2)
     with p1:
         outdir = path_picker("fetchsched_outdir", config["outdir"], mode="dir", label="Output folder")
@@ -1024,6 +1051,8 @@ def render_report_fetch_schedule_page() -> None:
             "report_fetch_config_path": report_fetch_config_path,
             "sources": sources,
             "products": products,
+            "max_retries": int(max_retries),
+            "retry_delay": int(retry_delay),
         }
         errors = validate_fetch_schedule_config(new_config)
         for e in errors:
@@ -1043,7 +1072,9 @@ def render_report_fetch_schedule_page() -> None:
     st.subheader("Current schedule")
     st.write(summarize_fetch_schedule(config))
     st.caption(f"Output: `{config['outdir']}/`  ·  Sources: {', '.join(config['sources'])}  ·  "
-               f"Products: {', '.join(config['products'])}")
+               f"Products: {', '.join(config['products'])}  ·  "
+               f"Retries: {config.get('max_retries', DEFAULT_MAX_RETRIES)} "
+               f"(every {config.get('retry_delay', DEFAULT_RETRY_DELAY_SECONDS)}s)")
 
     for w in fetch_schedule_warnings(config):
         st.warning(w)

@@ -27,6 +27,14 @@ Usage (CLI):
     python report_fetch.py --outdir rawData/katrina_daily_reports
     python report_fetch.py --date 2026-07-13 --source katrina --outdir DIR
     python report_fetch.py --secrets report_fetch_secrets.txt --outdir DIR
+    python report_fetch.py --outdir DIR --max-retries 10 --retry-delay 120
+
+Any endpoint still failing after its own connect/read retries is not given
+up on immediately - fetch_all_until_complete() re-fetches just the failing
+endpoints, waiting --retry-delay seconds between passes, up to --max-retries
+times (default 5 retries / 60s apart) before finally giving up. Endpoints
+failing due to a missing ck/cs are excluded from this - retrying those is
+pointless.
 """
 from __future__ import annotations
 
@@ -70,6 +78,15 @@ SOURCES: dict[str, dict] = {
 
 _RETRY_ATTEMPTS = 2
 _RETRY_DELAY_SECONDS = 3
+
+# Batch-level retry (fetch_all_until_complete): distinct from _RETRY_ATTEMPTS
+# above, which only covers transient connect/read failures within a single
+# HTTP call. This layer re-fetches endpoints that came back "error" after
+# exhausting that per-call retry too - e.g. a partner API that's simply slow
+# to generate a report for a few minutes (COBT MT PROD flight/train have
+# done this) rather than genuinely down.
+DEFAULT_MAX_RETRIES = 5
+DEFAULT_RETRY_DELAY_SECONDS = 60
 
 
 class ReportFetchError(Exception):
@@ -266,6 +283,37 @@ def fetch_all(date_str: str, outdir: Path, config: dict, cs_values: dict[str, st
     return results
 
 
+def fetch_all_until_complete(date_str: str, outdir: Path, config: dict, cs_values: dict[str, str | None],
+                              sources: list[str] | None = None, products: list[str] | None = None,
+                              timeout: int = 30, max_retries: int = DEFAULT_MAX_RETRIES,
+                              retry_delay: int = DEFAULT_RETRY_DELAY_SECONDS) -> list[dict]:
+    """Like fetch_all, but re-fetches only the endpoints still failing after
+    each pass (up to max_retries more passes, retry_delay seconds apart)
+    until every endpoint is OK or the retry budget runs out. Endpoints
+    failing because of a missing ck/cs are never retried - no amount of
+    waiting fixes a blank credential."""
+    results = fetch_all(date_str, outdir, config, cs_values, sources=sources, products=products, timeout=timeout)
+    for attempt in range(1, max_retries + 1):
+        pending = [r for r in results if r["status"] != "ok" and "missing credentials" not in r.get("error", "")]
+        if not pending:
+            break
+        log.warning(
+            "%d endpoint(s) still failing (retry %d/%d, waiting %ds): %s",
+            len(pending), attempt, max_retries, retry_delay,
+            ", ".join(f"{SOURCES[r['source']]['label']}/{r['product']}" for r in pending),
+        )
+        time.sleep(retry_delay)
+        retried = {
+            (r["source"], r["product"]): fetch_one(
+                r["source"], r["product"], date_str, config.get(r["source"], ""),
+                cs_values.get(r["source"]), outdir, timeout,
+            )
+            for r in pending
+        }
+        results = [retried.get((r["source"], r["product"]), r) for r in results]
+    return results
+
+
 def summarize_results(results: list[dict]) -> str:
     ok = sum(1 for r in results if r["status"] == "ok")
     lines = [f"{ok}/{len(results)} endpoint(s) OK"]
@@ -293,6 +341,12 @@ def main() -> None:
                          help="Limit to this source (repeatable). Default: all.")
     parser.add_argument("--product", action="append", choices=["flight", "train", "hotel"],
                          help="Limit to this product (repeatable). Default: all.")
+    parser.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES,
+                         help=f"Re-fetch still-failing endpoints up to this many more times "
+                              f"(default {DEFAULT_MAX_RETRIES}). Missing-credential failures "
+                              f"are never retried. 0 disables batch-level retry.")
+    parser.add_argument("--retry-delay", type=int, default=DEFAULT_RETRY_DELAY_SECONDS,
+                         help=f"Seconds to wait between retry passes (default {DEFAULT_RETRY_DELAY_SECONDS}).")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -309,7 +363,9 @@ def main() -> None:
         raise SystemExit(1)
 
     log.info("fetching %s report(s) for %s into %s", ", ".join(sources), date_str, args.outdir)
-    results = fetch_all(date_str, args.outdir, config, cs_values, sources=sources, products=args.product)
+    results = fetch_all_until_complete(date_str, args.outdir, config, cs_values, sources=sources,
+                                        products=args.product, max_retries=args.max_retries,
+                                        retry_delay=args.retry_delay)
     log.info("\n%s", summarize_results(results))
     if any(r["status"] != "ok" for r in results):
         raise SystemExit(1)
