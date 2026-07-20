@@ -41,6 +41,7 @@ from pipeline import (
     write_verification_report,
 )
 from report_fetch import (
+    DEFAULT_KEEP_ORIGINALS,
     DEFAULT_MAX_RETRIES,
     DEFAULT_RETRY_DELAY_SECONDS,
     REPORT_FETCH_SECRETS_PATH,
@@ -48,6 +49,7 @@ from report_fetch import (
     cs_env_var,
     fetch_all_until_complete,
     load_report_fetch_config,
+    postprocess_downloads,
     read_cs,
     save_cs_secrets,
     save_report_fetch_config,
@@ -917,12 +919,18 @@ def render_report_fetch_page() -> None:
                 results = fetch_all_until_complete(report_date, Path(outdir), config, cs_values,
                                                     sources=sources, products=products,
                                                     max_retries=int(max_retries), retry_delay=int(retry_delay))
+                post = postprocess_downloads(Path(outdir), results, keep=DEFAULT_KEEP_ORIGINALS)
             ok = sum(1 for r in results if r["status"] == "ok")
             if ok == len(results):
                 st.success(f"{ok}/{len(results)} endpoint(s) OK. Saved to {outdir}/")
             else:
                 st.warning(f"{ok}/{len(results)} endpoint(s) OK.")
             st.code(summarize_results(results), language=None)
+            st.caption(
+                f"Renamed {len(post['renamed'])} file(s) per dataFilter/fileNameReplace.xlsx "
+                f"(overwriting the previous copy); pruned {len(post['pruned'])} stale original(s), "
+                f"keeping the newest {DEFAULT_KEEP_ORIGINALS} per file pattern."
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -44,6 +44,7 @@ import io
 import json
 import logging
 import os
+import shutil
 import ssl
 import time
 import zipfile
@@ -53,10 +54,13 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import certifi
+import openpyxl
 
 PROJECT_DIR = Path(__file__).parent
 REPORT_FETCH_CONFIG_PATH = PROJECT_DIR / "report_fetch_config.json"
 REPORT_FETCH_SECRETS_PATH = PROJECT_DIR / "report_fetch_secrets.txt"
+FILENAME_REPLACE_MAP_PATH = PROJECT_DIR / "dataFilter" / "fileNameReplace.xlsx"
+DEFAULT_KEEP_ORIGINALS = 7
 
 # Explicit CA bundle rather than trusting the OS/venv Python to have one
 # wired up correctly - python.org macOS builds need "Install Certificates
@@ -231,6 +235,99 @@ def extract_zip_bytes(content: bytes, outdir: Path) -> list[Path]:
 
 
 # ---------------------------------------------------------------------------
+# Filename replacement + retention - dataFilter/fileNameReplace.xlsx maps a
+# downloaded file's name prefix (originalFileName, e.g. "KATRINA_HOTEL_
+# Branch") to a fixed name to also save it as (replacedFileName, e.g.
+# "katrinaHTLBrc"). The renamed copy always overwrites the previous one (one
+# per mapping), while the dated originals accumulate - see
+# prune_old_originals() for the retention side. Applies identically whether
+# report_fetch.py was run from the CLI or the Fetch Daily Reports page, so
+# both it and its schedule (report_fetch_scheduler.py) get the same
+# behavior for free.
+# ---------------------------------------------------------------------------
+
+def load_filename_replace_map(path: Path = FILENAME_REPLACE_MAP_PATH) -> dict[str, str]:
+    """Reads the two-column (originalFileName, replacedFileName) sheet into
+    {originalFileName: replacedFileName}. Missing file (dataFilter/ is
+    gitignored, like the rest of that folder) means no mapping is
+    configured yet - copy/rename becomes a no-op rather than an error."""
+    if not path.exists():
+        return {}
+    wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    ws = wb.worksheets[0]
+    rows = ws.iter_rows(values_only=True)
+    next(rows, None)  # header: originalFileName, replacedFileName
+    mapping = {}
+    for row in rows:
+        if not row or not row[0] or len(row) < 2 or not row[1]:
+            continue
+        mapping[str(row[0]).strip()] = str(row[1]).strip()
+    return mapping
+
+
+def _match_original_pattern(filename_stem: str, mapping: dict[str, str]) -> str | None:
+    """Longest matching originalFileName prefix - guards against a shorter
+    pattern shadowing a more specific one if the mapping ever grows entries
+    that share a prefix."""
+    candidates = [pattern for pattern in mapping if filename_stem.startswith(pattern)]
+    return max(candidates, key=len) if candidates else None
+
+
+def apply_filename_replacements(files: list[Path], outdir: Path,
+                                 mapping: dict[str, str] | None = None) -> list[Path]:
+    """Copies each downloaded file that matches an originalFileName prefix
+    to outdir/<replacedFileName><ext>, overwriting whatever was there from
+    the previous fetch - so there's always exactly one renamed copy per
+    mapping, regardless of how many dated originals have piled up."""
+    mapping = load_filename_replace_map() if mapping is None else mapping
+    if not mapping:
+        return []
+    renamed = []
+    for f in files:
+        pattern = _match_original_pattern(f.stem, mapping)
+        if pattern is None:
+            continue
+        target = outdir / f"{mapping[pattern]}{f.suffix}"
+        shutil.copyfile(f, target)
+        renamed.append(target)
+    return renamed
+
+
+def prune_old_originals(outdir: Path, mapping: dict[str, str] | None = None,
+                         keep: int = DEFAULT_KEEP_ORIGINALS) -> list[Path]:
+    """Per originalFileName pattern, keeps only the `keep` most-recently-
+    modified downloaded files in outdir and deletes the rest. The renamed
+    copies (apply_filename_replacements) never match a pattern themselves
+    (their names are the replacedFileName, not the original), so they're
+    untouched by this."""
+    mapping = load_filename_replace_map() if mapping is None else mapping
+    if not mapping or not outdir.exists():
+        return []
+    removed = []
+    for pattern in mapping:
+        matches = sorted(
+            (p for p in outdir.iterdir() if p.is_file() and p.stem.startswith(pattern)),
+            key=lambda p: p.stat().st_mtime, reverse=True,
+        )
+        for stale in matches[keep:]:
+            stale.unlink()
+            removed.append(stale)
+    return removed
+
+
+def postprocess_downloads(outdir: Path, results: list[dict],
+                           keep: int = DEFAULT_KEEP_ORIGINALS) -> dict:
+    """Runs after a fetch batch completes: renames/overwrites the fixed
+    copies, then prunes originals down to `keep` per pattern. Returns
+    {"renamed": [...], "pruned": [...]} for logging/display."""
+    mapping = load_filename_replace_map()
+    downloaded = [Path(f) for r in results for f in r.get("files", [])]
+    renamed = apply_filename_replacements(downloaded, outdir, mapping)
+    pruned = prune_old_originals(outdir, mapping, keep)
+    return {"renamed": renamed, "pruned": pruned}
+
+
+# ---------------------------------------------------------------------------
 # Fetch orchestration
 # ---------------------------------------------------------------------------
 
@@ -367,6 +464,10 @@ def main() -> None:
                                         products=args.product, max_retries=args.max_retries,
                                         retry_delay=args.retry_delay)
     log.info("\n%s", summarize_results(results))
+
+    post = postprocess_downloads(args.outdir, results)
+    log.info("renamed %d file(s), pruned %d stale original(s)", len(post["renamed"]), len(post["pruned"]))
+
     if any(r["status"] != "ok" for r in results):
         raise SystemExit(1)
 
