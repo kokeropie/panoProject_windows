@@ -6,7 +6,8 @@ test_data/
 pipeline.log
 *.log
 .claude/
-dataFilter/
+dataFilter/*
+!dataFilter/fileNameReplace.xlsx
 output/
 rawData/
 sql_config.json
