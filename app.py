@@ -926,11 +926,18 @@ def render_report_fetch_page() -> None:
             else:
                 st.warning(f"{ok}/{len(results)} endpoint(s) OK.")
             st.code(summarize_results(results), language=None)
-            st.caption(
-                f"Renamed {len(post['renamed'])} file(s) per dataFilter/fileNameReplace.xlsx "
-                f"(overwriting the previous copy); pruned {len(post['pruned'])} stale original(s), "
-                f"keeping the newest {DEFAULT_KEEP_ORIGINALS} per file pattern."
-            )
+            if post["mapping_found"]:
+                st.caption(
+                    f"Renamed {len(post['renamed'])} file(s) per dataFilter/fileNameReplace.xlsx "
+                    f"(overwriting the previous copy); pruned {len(post['pruned'])} stale original(s), "
+                    f"keeping the newest {DEFAULT_KEEP_ORIGINALS} per file pattern."
+                )
+            else:
+                st.warning(
+                    "dataFilter/fileNameReplace.xlsx wasn't found on this machine - no files were "
+                    "renamed. dataFilter/ is gitignored, so this mapping file has to be copied here "
+                    "manually (it doesn't travel with git push/pull)."
+                )
 
 
 # ---------------------------------------------------------------------------

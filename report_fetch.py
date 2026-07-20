@@ -319,12 +319,16 @@ def postprocess_downloads(outdir: Path, results: list[dict],
                            keep: int = DEFAULT_KEEP_ORIGINALS) -> dict:
     """Runs after a fetch batch completes: renames/overwrites the fixed
     copies, then prunes originals down to `keep` per pattern. Returns
-    {"renamed": [...], "pruned": [...]} for logging/display."""
+    {"renamed": [...], "pruned": [...], "mapping_found": bool} -
+    mapping_found is False (and renamed/pruned always empty) when
+    dataFilter/fileNameReplace.xlsx doesn't exist on this machine - that
+    folder is gitignored, so the mapping has to be copied there manually,
+    separately from a git pull/push."""
     mapping = load_filename_replace_map()
     downloaded = [Path(f) for r in results for f in r.get("files", [])]
     renamed = apply_filename_replacements(downloaded, outdir, mapping)
     pruned = prune_old_originals(outdir, mapping, keep)
-    return {"renamed": renamed, "pruned": pruned}
+    return {"renamed": renamed, "pruned": pruned, "mapping_found": bool(mapping)}
 
 
 # ---------------------------------------------------------------------------
@@ -466,7 +470,11 @@ def main() -> None:
     log.info("\n%s", summarize_results(results))
 
     post = postprocess_downloads(args.outdir, results)
-    log.info("renamed %d file(s), pruned %d stale original(s)", len(post["renamed"]), len(post["pruned"]))
+    if post["mapping_found"]:
+        log.info("renamed %d file(s), pruned %d stale original(s)", len(post["renamed"]), len(post["pruned"]))
+    else:
+        log.warning("%s not found - no files renamed (dataFilter/ is gitignored, copy it here manually)",
+                    FILENAME_REPLACE_MAP_PATH)
 
     if any(r["status"] != "ok" for r in results):
         raise SystemExit(1)
